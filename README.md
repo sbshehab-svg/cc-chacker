@@ -10,7 +10,9 @@
 ```bash
 pip install -r requirements.txt
 ```
-
+```render
+gunicorn main:app
+```
 ## ব্যবহার (Usage)
 
 `main.py` ফাইলে আপনার কার্ডের ডিটেইলস এবং ইউজারের তথ্য আপডেট করুন এবং স্ক্রিপ্টটি রান করুন:
