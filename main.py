@@ -7,7 +7,7 @@ import threading
 import telebot
 import random
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask
+from flask import Flask, render_template_string
 
 # Flask app for Render (Web Service stability)
 app = Flask(__name__)
@@ -375,7 +375,244 @@ def run_bot():
 
 @app.route('/health')
 def health():
-    return {"status": "healthy", "service": "CC Checker", "bot": "online"}
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CC Checker | System Status</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                --primary: #c084fc;
+                --secondary: #6366f1;
+                --bg: #030712;
+                --card-bg: rgba(17, 24, 39, 0.7);
+                --text: #f9fafb;
+                --success: #22c55e;
+            }
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                font-family: 'Outfit', sans-serif;
+            }
+
+            body {
+                background: var(--bg);
+                background-image: 
+                    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
+                    radial-gradient(circle at 80% 80%, rgba(192, 132, 252, 0.15) 0%, transparent 40%);
+                color: var(--text);
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                overflow: hidden;
+            }
+
+            .container {
+                width: 90%;
+                max-width: 800px;
+                position: relative;
+                z-index: 1;
+            }
+
+            .glass-card {
+                background: var(--card-bg);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 24px;
+                padding: 3rem;
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                animation: fadeIn 0.8s ease-out;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            .header {
+                text-align: center;
+                margin-bottom: 3rem;
+            }
+
+            .logo-orb {
+                width: 80px;
+                height: 80px;
+                background: linear-gradient(135deg, var(--primary), var(--secondary));
+                border-radius: 50%;
+                margin: 0 auto 1.5rem;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-size: 2rem;
+                box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+                animation: pulse 2s infinite;
+            }
+
+            @keyframes pulse {
+                0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+                70% { box-shadow: 0 0 0 20px rgba(99, 102, 241, 0); }
+                100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+            }
+
+            h1 {
+                font-size: 2.5rem;
+                font-weight: 800;
+                background: linear-gradient(to right, #fff, #9ca3af);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                margin-bottom: 0.5rem;
+            }
+
+            .status-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5rem;
+                background: rgba(34, 197, 94, 0.1);
+                color: var(--success);
+                padding: 0.5rem 1rem;
+                border-radius: 100px;
+                font-size: 0.875rem;
+                font-weight: 600;
+                border: 1px solid rgba(34, 197, 94, 0.2);
+            }
+
+            .status-dot {
+                width: 8px;
+                height: 8px;
+                background: var(--success);
+                border-radius: 50%;
+                box-shadow: 0 0 10px var(--success);
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 1.5rem;
+                margin-top: 2rem;
+            }
+
+            .stat-item {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                padding: 1.5rem;
+                border-radius: 16px;
+                transition: all 0.3s ease;
+            }
+
+            .stat-item:hover {
+                background: rgba(255, 255, 255, 0.05);
+                transform: translateY(-5px);
+                border-color: rgba(255, 255, 255, 0.1);
+            }
+
+            .stat-label {
+                color: #9ca3af;
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                margin-bottom: 0.5rem;
+            }
+
+            .stat-value {
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 1.25rem;
+                font-weight: 600;
+                color: var(--primary);
+            }
+
+            .footer-info {
+                text-align: center;
+                margin-top: 3rem;
+                color: #6b7280;
+                font-size: 0.875rem;
+            }
+
+            .floating-blobs {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                z-index: 0;
+            }
+
+            .blob {
+                position: absolute;
+                background: linear-gradient(135deg, var(--secondary), var(--primary));
+                filter: blur(80px);
+                border-radius: 50%;
+                opacity: 0.2;
+                animation: float 20s infinite alternate;
+            }
+
+            @keyframes float {
+                from { transform: translate(0, 0); }
+                to { transform: translate(100px, 100px); }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="floating-blobs">
+            <div class="blob" style="width: 400px; height: 400px; top: -100px; left: -100px;"></div>
+            <div class="blob" style="width: 500px; height: 500px; bottom: -200px; right: -200px; animation-delay: -5s;"></div>
+        </div>
+
+        <div class="container">
+            <div class="glass-card">
+                <div class="header">
+                    <div class="logo-orb">⚡</div>
+                    <h1>System Health</h1>
+                    <div class="status-badge">
+                        <div class="status-dot"></div>
+                        CORE SYSTEMS OPERATIONAL
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Service Name</div>
+                        <div class="stat-value">CC Checker Pro</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Response Time</div>
+                        <div class="stat-value" id="ping">-- ms</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Bot Status</div>
+                        <div class="stat-value">Active Online</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Environment</div>
+                        <div class="stat-value">Render Production</div>
+                    </div>
+                </div>
+
+                <div class="footer-info">
+                    &copy; 2026 SBSHEHAB | Advanced Automation Systems
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Simulate dynamic values
+            const start = Date.now();
+            window.onload = () => {
+                const duration = Date.now() - start;
+                document.getElementById('ping').innerText = duration + ' ms';
+            };
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template)
 
 if __name__ == "__main__":
     # পোর্ট কনফিগারেশন
