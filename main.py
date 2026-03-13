@@ -104,60 +104,69 @@ USER_AGENTS = [
 ]
 
 PROXY_LIST = []
+FETCH_LOCK = threading.Lock()
 
 def fetch_proxies():
-    """ VPN Gate CSV API থেকে রিয়েল সার্ভার IP প্রক্সি হিসেবে ফেচ করে """
+    """ একাধিক সোর্স থেকে প্রক্সি এবং VPN Gate ডেটা ফেচ করে """
     global PROXY_LIST, STATS
-    new_proxies = []
-    sessions = []
-
+    if not FETCH_LOCK.acquire(blocking=False):
+        return # সেশন অলরেডি ডেটা ফেচ করছে
+        
     try:
-        url = "https://www.vpngate.net/api/iphone/"
-        response = requests.get(url, timeout=15)
-        if response.status_code == 200:
-            raw_lines = response.text.strip().split('\n')
-            for line in raw_lines[2:]:
-                parts = line.split(',')
-                if len(parts) < 15:
-                    continue
-                try:
-                    ip      = parts[1].strip()
-                    speed   = parts[4].strip()
-                    ping    = parts[3].strip()
-                    country = parts[6].strip()
-                    if not ip or not ip[0].isdigit():
-                        continue
-                    new_proxies.append(f"{ip}:443")
-                    if len(sessions) < 10:
-                        mbps = round(int(speed) / 1_000_000, 1) if speed.isdigit() else 0
-                        sessions.append({
-                            "country": country,
-                            "ip": ip,
-                            "protocol": "OpenVPN",
-                            "speed": speed,
-                            "mbps": mbps,
-                            "ping": ping
-                        })
-                except Exception:
-                    continue
-    except Exception as e:
-        logging.error(f"VPN Gate Fetch Error: {e}")
+        new_proxies = []
+        sessions = []
+        
+        # 1. HTTP Proxy Sources (Stripe API এর জন্য)
+        proxy_sources = [
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+            "https://proxyspace.pro/http.txt"
+        ]
+        
+        for url in proxy_sources:
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    extracted = [p.strip() for p in response.text.split('\n') if p.strip() and ":" in p]
+                    new_proxies.extend(extracted)
+                    if len(new_proxies) > 500: break
+            except: continue
 
-    if new_proxies:
-        PROXY_LIST = list(set(new_proxies))
-        STATS["proxy_count"] = len(PROXY_LIST)
-        STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
-        if sessions:
-            STATS["vpn_sessions"] = sessions
-        add_event(f"VPN Gate Synced: {len(PROXY_LIST)} Live Nodes Online ✅", type="proxy_pass")
-        logging.info(f"Fetched {len(PROXY_LIST)} VPN Gate proxies.")
-    else:
-        STATS["proxy_errors"] += 1
-        add_event("Warning: VPN Gate Fetch Failed. Retrying...", type="proxy_fail")
-        logging.error("Failed to fetch VPN Gate proxy list.")
+        # 2. VPN Gate Status (Dashboard মনিটর এর জন্য)
+        try:
+            url = "https://www.vpngate.net/api/iphone/"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                raw_lines = response.text.strip().split('\n')
+                for line in raw_lines[2:22]: # Top 20
+                    parts = line.split(',')
+                    if len(parts) >= 15:
+                        speed = parts[4].strip()
+                        mbps = round(int(speed) / 1000000, 1) if speed.isdigit() else 0
+                        sessions.append({
+                            "country": parts[6].strip(),
+                            "protocol": "OpenVPN",
+                            "mbps": mbps
+                        })
+                if sessions:
+                    STATS["vpn_sessions"] = sessions
+        except: pass
+
+        if new_proxies:
+            PROXY_LIST = list(set(new_proxies))
+            STATS["proxy_count"] = len(PROXY_LIST)
+            STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
+            add_event(f"Network Nodes Resynced: {len(PROXY_LIST)} Proxies Online", type="proxy_pass")
+        else:
+            STATS["proxy_errors"] += 1
+            add_event("Warning: Network Source Interrupted. Retrying...", type="proxy_fail")
+            
+    finally:
+        FETCH_LOCK.release()
 
 def fetch_vpn_gate_data():
-    """ Alias - fetch_proxies() ই VPN Gate ডেটা আনে """
+    """ Alias """
     fetch_proxies()
 
 
@@ -396,6 +405,8 @@ def check_card(card_line, chat_id):
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
         STATS["dead"] += 1
+        # Optional: Notify user about dead cards with truncated number
+        # send_telegram_msg(chat_id, f"❌ *DEAD:* `{card['number'][:6]}xxxx` (Stripe Error)")
         with open("dead.txt", "a") as f:
             f.write(f"{card_line} | Reason: Stripe Declined\n")
 
@@ -831,7 +842,7 @@ def health():
                                 <th style="padding: 5px;">PROTOCOL</th>
                                 <th style="padding: 5px;">MBPS</th>
                             </tr>
-                            {''.join([f'<tr style="border-bottom: 1px solid #1a1a1a;"><td style="padding: 5px; color: var(--cyber-blue)">{s["country"]}</td><td style="padding: 5px;">{s["protocol"]}</td><td style="padding: 5px; color: var(--cyber-green)">{int(int(s["speed"])/1000000)}</td></tr>' for s in STATS["vpn_sessions"]]) if STATS["vpn_sessions"] else '<tr><td colspan="3" style="text-align:center; padding: 10px; color:#444;">SYNCING VPN GATE...</td></tr>'}
+                            {''.join([f'<tr style="border-bottom: 1px solid #1a1a1a;"><td style="padding: 5px; color: var(--cyber-blue)">{s["country"]}</td><td style="padding: 5px;">{s["protocol"]}</td><td style="padding: 5px; color: var(--cyber-green)">{s["mbps"]}</td></tr>' for s in STATS["vpn_sessions"]]) if STATS["vpn_sessions"] else '<tr><td colspan="3" style="text-align:center; padding: 10px; color:#444;">SYNCING VPN GATE...</td></tr>'}
                         </table>
                     </div>
 
