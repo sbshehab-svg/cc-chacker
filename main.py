@@ -106,61 +106,60 @@ USER_AGENTS = [
 PROXY_LIST = []
 
 def fetch_proxies():
-    """ একাধিক সোর্স থেকে প্রক্সি ফেচ করে """
+    """ VPN Gate CSV API থেকে রিয়েল সার্ভার IP প্রক্সি হিসেবে ফেচ করে """
     global PROXY_LIST, STATS
-    sources = [
-        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
-    ]
-    
     new_proxies = []
-    for url in sources:
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                extracted = [p.strip() for p in response.text.split('\n') if p.strip() and ":" in p]
-                new_proxies.extend(extracted)
-                if len(extracted) > 50: break # যদি যথেষ্ট পাওয়া যায় তাহলে থামবে
-        except Exception as e:
-            logging.error(f"Failed to fetch from {url}: {e}")
+    sessions = []
 
-    if new_proxies:
-        PROXY_LIST = list(set(new_proxies)) # Remove duplicates
-        STATS["proxy_count"] = len(PROXY_LIST)
-        STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
-        add_event(f"System Nodes Integrated: {len(PROXY_LIST)} Proxies Online", type="proxy_pass")
-        logging.info(f"Fetched {len(PROXY_LIST)} proxies.")
-    else:
-        STATS["proxy_errors"] += 1
-        add_event("Warning: Proxy Fetching Failed. Retrying in background...", type="proxy_fail")
-
-def fetch_vpn_gate_data():
-    """ VPN Gate থেকে লাইভ সেশন ডেটা ফেচ করে """
-    global STATS
     try:
-        # Use CSV API for easier parsing
         url = "https://www.vpngate.net/api/iphone/"
         response = requests.get(url, timeout=15)
         if response.status_code == 200:
-            lines = response.text.split('\n')
-            sessions = []
-            # Skip first 2 lines (header and description)
-            for line in lines[2:12]: # Just take top 10
+            raw_lines = response.text.strip().split('\n')
+            for line in raw_lines[2:]:
                 parts = line.split(',')
-                if len(parts) > 6:
-                    sessions.append({
-                        "country": parts[6],
-                        "ip": parts[1],
-                        "protocol": "OpenVPN" if "1" in parts[14] else "L2TP",
-                        "speed": parts[4]
-                    })
-            if sessions:
-                STATS["vpn_sessions"] = sessions
-                logging.info(f"Updated {len(sessions)} VPN Gate sessions.")
+                if len(parts) < 15:
+                    continue
+                try:
+                    ip      = parts[1].strip()
+                    speed   = parts[4].strip()
+                    ping    = parts[3].strip()
+                    country = parts[6].strip()
+                    if not ip or not ip[0].isdigit():
+                        continue
+                    new_proxies.append(f"{ip}:443")
+                    if len(sessions) < 10:
+                        mbps = round(int(speed) / 1_000_000, 1) if speed.isdigit() else 0
+                        sessions.append({
+                            "country": country,
+                            "ip": ip,
+                            "protocol": "OpenVPN",
+                            "speed": speed,
+                            "mbps": mbps,
+                            "ping": ping
+                        })
+                except Exception:
+                    continue
     except Exception as e:
         logging.error(f"VPN Gate Fetch Error: {e}")
+
+    if new_proxies:
+        PROXY_LIST = list(set(new_proxies))
+        STATS["proxy_count"] = len(PROXY_LIST)
+        STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
+        if sessions:
+            STATS["vpn_sessions"] = sessions
+        add_event(f"VPN Gate Synced: {len(PROXY_LIST)} Live Nodes Online ✅", type="proxy_pass")
+        logging.info(f"Fetched {len(PROXY_LIST)} VPN Gate proxies.")
+    else:
+        STATS["proxy_errors"] += 1
+        add_event("Warning: VPN Gate Fetch Failed. Retrying...", type="proxy_fail")
+        logging.error("Failed to fetch VPN Gate proxy list.")
+
+def fetch_vpn_gate_data():
+    """ Alias - fetch_proxies() ই VPN Gate ডেটা আনে """
+    fetch_proxies()
+
 
 def get_random_proxy():
     global STATS
