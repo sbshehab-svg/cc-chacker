@@ -44,6 +44,7 @@ STATS = {
     "proxy_success": 0,
     "proxy_errors": 0,
     "last_proxy_refresh": "Never",
+    "vpn_sessions": [],
     "recent_events": []
 }
 
@@ -135,6 +136,32 @@ def fetch_proxies():
         STATS["proxy_errors"] += 1
         add_event("Warning: Proxy Fetching Failed. Retrying in background...", type="proxy_fail")
 
+def fetch_vpn_gate_data():
+    """ VPN Gate থেকে লাইভ সেশন ডেটা ফেচ করে """
+    global STATS
+    try:
+        # Use CSV API for easier parsing
+        url = "https://www.vpngate.net/api/iphone/"
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            lines = response.text.split('\n')
+            sessions = []
+            # Skip first 2 lines (header and description)
+            for line in lines[2:12]: # Just take top 10
+                parts = line.split(',')
+                if len(parts) > 6:
+                    sessions.append({
+                        "country": parts[6],
+                        "ip": parts[1],
+                        "protocol": "OpenVPN" if "1" in parts[14] else "L2TP",
+                        "speed": parts[4]
+                    })
+            if sessions:
+                STATS["vpn_sessions"] = sessions
+                logging.info(f"Updated {len(sessions)} VPN Gate sessions.")
+    except Exception as e:
+        logging.error(f"VPN Gate Fetch Error: {e}")
+
 def get_random_proxy():
     global STATS
     if not PROXY_LIST:
@@ -147,6 +174,7 @@ def get_random_proxy():
 def proxy_refresher():
     while True:
         fetch_proxies()
+        fetch_vpn_gate_data()
         # যদি কোনো প্রক্সি না পায় তাহলে দ্রুত ট্রাই করবে, পেলে ১০ মিনিট পর
         sleep_time = 30 if not PROXY_LIST else 600
         time.sleep(sleep_time)
@@ -783,6 +811,18 @@ def health():
                         <p style="font-size: 0.8rem; margin-bottom: 10px;">Active Nodes: <span style="color:#fff">{STATS['proxy_count']}</span></p>
                         <p style="font-size: 0.8rem; margin-bottom: 10px;">Efficiency: <span style="color:var(--cyber-blue)">{int((STATS['proxy_success']/(STATS['proxy_success']+STATS['proxy_errors'])*100)) if (STATS['proxy_success']+STATS['proxy_errors']) > 0 else 100}%</span></p>
                         <p style="font-size: 0.7rem; color: #444; margin-top: 15px;">REFRESH_CYCLE: {STATS['last_proxy_refresh']}</p>
+                    </div>
+
+                    <div class="panel-header" style="margin-top: 1.5rem;">VPN_GATE_MONITOR</div>
+                    <div class="stat-card" style="border-radius: 0 0 4px 4px; border-top: none; padding: 10px; max-height: 250px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.65rem;">
+                            <tr style="color: #555; text-align: left; border-bottom: 1px solid #222;">
+                                <th style="padding: 5px;">COUNTRY</th>
+                                <th style="padding: 5px;">PROTOCOL</th>
+                                <th style="padding: 5px;">MBPS</th>
+                            </tr>
+                            {''.join([f'<tr style="border-bottom: 1px solid #1a1a1a;"><td style="padding: 5px; color: var(--cyber-blue)">{s["country"]}</td><td style="padding: 5px;">{s["protocol"]}</td><td style="padding: 5px; color: var(--cyber-green)">{int(int(s["speed"])/1000000)}</td></tr>' for s in STATS["vpn_sessions"]]) if STATS["vpn_sessions"] else '<tr><td colspan="3" style="text-align:center; padding: 10px; color:#444;">SYNCING VPN GATE...</td></tr>'}
+                        </table>
                     </div>
 
                     <div class="panel-header" style="margin-top: 1.5rem;">ACTIVE_SESSIONS</div>
