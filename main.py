@@ -552,15 +552,24 @@ def handle_cards(message):
              bot.reply_to(message, "❌ Invalid format. Please use: `number|month|year|cvc`")
 
 def run_bot():
-    try:
-        logging.info("Clearing any existing Telegram sessions/webhooks...")
-        bot.remove_webhook()
-        time.sleep(5) # Delay to allow Telegram server to clear session
-    except Exception as e:
-        logging.error(f"Error removing webhook: {e}")
-        
-    logging.info("Telegram Bot Polling Started...")
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=20)
+    while True:
+        try:
+            logging.info("Clearing any existing Telegram sessions/webhooks...")
+            bot.remove_webhook(drop_pending_updates=True)
+            time.sleep(5) 
+            
+            logging.info("Telegram Bot Polling Started...")
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=20)
+        except telebot.apihelper.ApiTelegramException as e:
+            if e.error_code == 409:
+                logging.warning("Conflict detected (409). Another instance might be running. Retrying in 10s...")
+                time.sleep(10)
+            else:
+                logging.error(f"Telegram API Error: {e}")
+                time.sleep(5)
+        except Exception as e:
+            logging.error(f"Bot Polling Error: {e}")
+            time.sleep(5)
 
 @app.route('/health')
 def health():
@@ -794,9 +803,9 @@ def start_background_threads():
         if any(t.name == "BotThread" for t in threading.enumerate()):
             return
 
-    # Add a longer delay (15s) to allow Render's old instance to fully shut down
-    # during zero-downtime deployment.
-    time.sleep(15) 
+    # Add a longer delay (35s) to allow Render's old instance to fully shut down
+    # during zero-downtime deployment (Render grace period is usually 30s).
+    time.sleep(35) 
 
     t1 = threading.Thread(target=run_bot, daemon=True, name="BotThread")
     t1.start()
