@@ -550,15 +550,13 @@ def handle_cards(message):
 
 def run_bot():
     try:
-        logging.info("Removing any existing webhooks...")
+        logging.info("Clearing any existing Telegram sessions/webhooks...")
         bot.remove_webhook()
-        time.sleep(2) # Give Telegram a moment to clear the connection
+        time.sleep(5) # Delay to allow Telegram server to clear session
     except Exception as e:
         logging.error(f"Error removing webhook: {e}")
         
     logging.info("Telegram Bot Polling Started...")
-    # Use skip_pending=True to ignore old messages on startup
-    # and provide a timeout to avoid hanging
     bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=20)
 
 @app.route('/health')
@@ -799,9 +797,9 @@ def start_background_threads():
         if any(t.name == "BotThread" for t in threading.enumerate()):
             return
 
-    # Add a slightly longer delay to allow Render's old instance to fully shut down
+    # Add a longer delay (15s) to allow Render's old instance to fully shut down
     # during zero-downtime deployment.
-    time.sleep(5) 
+    time.sleep(15) 
 
     t1 = threading.Thread(target=run_bot, daemon=True, name="BotThread")
     t1.start()
