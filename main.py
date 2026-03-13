@@ -400,13 +400,13 @@ def check_card(card_line, chat_id):
                 f.write(f"{card_line} | Reason: {result}\n")
         else:
             STATS["dead"] += 1
-            # add_event(f"DEAD ❌ | {cc_num[:6]}xxxx") # Optional: dead logs make activity very messy
+            reason = result.replace('FAILED: ', '').replace('ERROR: ', '')[:30]
+            send_telegram_msg(chat_id, f"❌ *DEAD:* `{cc_num}`\n📝 *Reason:* {reason}")
             with open("dead.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
         STATS["dead"] += 1
-        # Optional: Notify user about dead cards with truncated number
-        # send_telegram_msg(chat_id, f"❌ *DEAD:* `{card['number'][:6]}xxxx` (Stripe Error)")
+        send_telegram_msg(chat_id, f"❌ *DEAD:* `{card['number']}`\n📝 *Reason:* Stripe Declined")
         with open("dead.txt", "a") as f:
             f.write(f"{card_line} | Reason: Stripe Declined\n")
 
