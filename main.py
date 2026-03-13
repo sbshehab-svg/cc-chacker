@@ -403,13 +403,13 @@ def check_card(card_line, chat_id):
             STATS["dead"] += 1
             reason = result.replace('FAILED: ', '').replace('ERROR: ', '')[:30]
             add_event(f"DEAD ❌ | {cc_num[:6]}xxxx | {reason}", type="dead")
-            send_telegram_msg(chat_id, f"❌ *DEAD:* `{cc_num}`\n📝 *Reason:* {reason}")
+            # We don't send individual DEAD messages to Telegram to avoid spam
             with open("dead.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
         STATS["dead"] += 1
         add_event(f"DEAD ❌ | {card['number'][:6]}xxxx | Stripe Declined", type="dead")
-        send_telegram_msg(chat_id, f"❌ *DEAD:* `{card['number']}`\n📝 *Reason:* Stripe Declined")
+        # We don't send individual DEAD messages to Telegram to avoid spam
         with open("dead.txt", "a") as f:
             f.write(f"{card_line} | Reason: Stripe Declined\n")
 
