@@ -418,6 +418,10 @@ def start_bulk_check(cards_list, chat_id, is_silent=False):
     global STATS
     threads = 50 
     
+    # Store initial stats to calculate difference
+    start_hits = STATS["hits"]
+    start_lives = STATS["lives"]
+
     if not is_silent:
         send_telegram_msg(chat_id, f"🚀 *Checking Started...*\nTotal Cards: `{len(cards_list)}`")
 
@@ -436,7 +440,19 @@ def start_bulk_check(cards_list, chat_id, is_silent=False):
         STATS["active_processes"] -= 1
         
     if not is_silent:
-        send_telegram_msg(chat_id, "🏁 *Checking Completed!*")
+        hits_found = STATS["hits"] - start_hits
+        lives_found = STATS["lives"] - start_lives
+        
+        report = (
+            "🏁 *Checking Completed!*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🔢 *Requested:* `{len(cards_list)}`\n"
+            f"🔥 *Approved (Hits):* `{hits_found}`\n"
+            f"✅ *Live Cards:* `{lives_found}`\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+        send_telegram_msg(chat_id, report)
+
 
 # টেলিগ্রাম বট হ্যান্ডলার
 @bot.message_handler(commands=['start'])
