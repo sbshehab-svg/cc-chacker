@@ -371,9 +371,13 @@ def start_bulk_check(cards_list, chat_id, is_silent=False):
     else:
         USER_PROCESSES[chat_id]["checking"] = True
 
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Pass chat_id to check_card
-        executor.map(lambda c: check_card(c, chat_id), cards_list)
+    STATS["active_processes"] += 1
+    try:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            # Pass chat_id to check_card
+            executor.map(lambda c: check_card(c, chat_id), cards_list)
+    finally:
+        STATS["active_processes"] -= 1
         
     if not is_silent:
         send_telegram_msg(chat_id, "🏁 *Checking Completed!*")
@@ -559,7 +563,7 @@ def run_bot():
     while True:
         try:
             logging.info("Clearing any existing Telegram sessions/webhooks...")
-            bot.remove_webhook(drop_pending_updates=True)
+            bot.remove_webhook()
             time.sleep(5) 
             
             logging.info("Telegram Bot Polling Started...")
@@ -788,22 +792,27 @@ def health():
 def start_background_threads():
     # Use a lock file to ensure only one process starts the bot
     # This is crucial for Gunicorn which might import the script multiple times
-    lock_path = "/tmp/bot.lock"
+    # Use a lock file to ensure only one process starts the bot
+    # This is crucial for Gunicorn which might import the script multiple times
+    import tempfile
+    lock_path = os.path.join(tempfile.gettempdir(), "sbs_bot.lock")
     
     # Try to acquire the lock
     try:
-        # On some systems /tmp might not be writable or exist, handle gracefully
         f = open(lock_path, 'w')
-        import fcntl
         try:
+            import fcntl
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # If we get here, we have the lock
-            logging.info(f"Process {os.getpid()} acquired lock. Starting threads...")
-        except IOError:
-            logging.info(f"Process {os.getpid()} could not acquire lock (already running). Skipping.")
-            return
+        except ImportError:
+            # Windows fallback: simple thread check
+            if any(t.name == "BotThread" for t in threading.enumerate()):
+                return
+            # On Windows, we can't easily flock, so we just rely on thread name 
+            # and hope we aren't running multiple OS processes (standard for dev)
+            pass
+        logging.info(f"Process {os.getpid()} starting background threads...")
     except Exception as e:
-        logging.warning(f"Locking mechanism failed or not supported ({e}). Falling back to simple check.")
+        logging.warning(f"Locking mechanism issue ({e}).")
         if any(t.name == "BotThread" for t in threading.enumerate()):
             return
 
