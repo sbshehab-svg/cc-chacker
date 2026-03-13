@@ -105,22 +105,35 @@ USER_AGENTS = [
 PROXY_LIST = []
 
 def fetch_proxies():
-    """ ProxyScrape থেকে ফ্রিতে প্রক্সি ফেচ করে """
+    """ একাধিক সোর্স থেকে প্রক্সি ফেচ করে """
     global PROXY_LIST, STATS
-    try:
-        url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            proxies = [p.strip() for p in response.text.split('\n') if p.strip()]
-            if proxies:
-                PROXY_LIST = proxies
-                STATS["proxy_count"] = len(proxies)
-                STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
-                add_event(f"Successfully refreshed {len(proxies)} proxies.")
-                logging.info(f"Fetched {len(PROXY_LIST)} proxies.")
-    except Exception as e:
+    sources = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
+    ]
+    
+    new_proxies = []
+    for url in sources:
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                extracted = [p.strip() for p in response.text.split('\n') if p.strip() and ":" in p]
+                new_proxies.extend(extracted)
+                if len(extracted) > 50: break # যদি যথেষ্ট পাওয়া যায় তাহলে থামবে
+        except Exception as e:
+            logging.error(f"Failed to fetch from {url}: {e}")
+
+    if new_proxies:
+        PROXY_LIST = list(set(new_proxies)) # Remove duplicates
+        STATS["proxy_count"] = len(PROXY_LIST)
+        STATS["last_proxy_refresh"] = time.strftime("%H:%M:%S")
+        add_event(f"System Nodes Integrated: {len(PROXY_LIST)} Proxies Online", type="proxy_pass")
+        logging.info(f"Fetched {len(PROXY_LIST)} proxies.")
+    else:
         STATS["proxy_errors"] += 1
-        logging.error(f"Failed to fetch proxies: {e}")
+        add_event("Warning: Proxy Fetching Failed. Retrying in background...", type="proxy_fail")
 
 def get_random_proxy():
     global STATS
@@ -134,7 +147,9 @@ def get_random_proxy():
 def proxy_refresher():
     while True:
         fetch_proxies()
-        time.sleep(600)  # Refresh every 10 minutes
+        # যদি কোনো প্রক্সি না পায় তাহলে দ্রুত ট্রাই করবে, পেলে ১০ মিনিট পর
+        sleep_time = 30 if not PROXY_LIST else 600
+        time.sleep(sleep_time)
 
 # Global control flags (Deprecated: use USER_PROCESSES)
 IS_CHECKING = True
@@ -795,26 +810,28 @@ def start_background_threads():
     # Use a lock file to ensure only one process starts the bot
     # This is crucial for Gunicorn which might import the script multiple times
     import tempfile
-    lock_path = os.path.join(tempfile.gettempdir(), "sbs_bot.lock")
+    lock_path = os.path.join(tempfile.gettempdir(), "sbs_bot_v2.lock")
     
     # Try to acquire the lock
     try:
-        f = open(lock_path, 'w')
+        f = open(lock_path, 'a')
         try:
             import fcntl
+            # Try to get an exclusive lock, do not block (LOCK_NB)
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except ImportError:
-            # Windows fallback: simple thread check
+        except (ImportError, IOError, OSError):
+            # If we are on Windows or the lock is already held by another process
             if any(t.name == "BotThread" for t in threading.enumerate()):
                 return
-            # On Windows, we can't easily flock, so we just rely on thread name 
-            # and hope we aren't running multiple OS processes (standard for dev)
-            pass
-        logging.info(f"Process {os.getpid()} starting background threads...")
+            
+            # On Linux, if flock failed, it means another Gunicorn worker has the lock
+            if os.name != 'nt': 
+                logging.info(f"Process {os.getpid()} - Lock busy, background tasks already active.")
+                return
+        
+        logging.info(f"Process {os.getpid()} - Lock acquired. Starting background services.")
     except Exception as e:
-        logging.warning(f"Locking mechanism issue ({e}).")
-        if any(t.name == "BotThread" for t in threading.enumerate()):
-            return
+        logging.warning(f"Locking mechanism bypassed: {e}")
 
     # Remove delay from here to prevent blocking Gunicorn startup
     t1 = threading.Thread(target=run_bot, daemon=True, name="BotThread")
