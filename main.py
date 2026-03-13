@@ -554,19 +554,39 @@ def health():
 
 # বট এবং প্রক্সি রিফ্রেশার থ্রেড শুরু করা (Gunicorn এ সাপোর্ট পাওয়ার জন্য বাইরে রাখা হয়েছে)
 # Bot and Proxy refresher threads start
-# Move these into a function to be called more carefully if needed
 def start_background_threads():
-    # We check if we're in the main process to avoid double-polling in some environments
-    # However, Gunicorn workers are separate processes. 
-    # The best solution is to ensure Gunicorn runs with --workers 1.
+    # Use a lock file to ensure only one process starts the bot
+    # This is crucial for Gunicorn which might import the script multiple times
+    lock_path = "/tmp/bot.lock"
+    
+    # Try to acquire the lock
+    try:
+        # On some systems /tmp might not be writable or exist, handle gracefully
+        f = open(lock_path, 'w')
+        import fcntl
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # If we get here, we have the lock
+            logging.info(f"Process {os.getpid()} acquired lock. Starting threads...")
+        except IOError:
+            logging.info(f"Process {os.getpid()} could not acquire lock (already running). Skipping.")
+            return
+    except Exception as e:
+        logging.warning(f"Locking mechanism failed or not supported ({e}). Falling back to simple check.")
+        if any(t.name == "BotThread" for t in threading.enumerate()):
+            return
+
+    # Add a slightly longer delay to allow Render's old instance to fully shut down
+    # during zero-downtime deployment.
+    time.sleep(5) 
+
     t1 = threading.Thread(target=run_bot, daemon=True, name="BotThread")
     t1.start()
     t2 = threading.Thread(target=proxy_refresher, daemon=True, name="ProxyThread")
     t2.start()
 
-# Only start if not already running (simple check)
-if not any(t.name == "BotThread" for t in threading.enumerate()):
-    start_background_threads()
+# Start background threads
+start_background_threads()
 
 if __name__ == "__main__":
     # পোর্ট কনফিগারেশন
@@ -577,6 +597,7 @@ if __name__ == "__main__":
         with open("cards.txt", "r") as f:
             initial_cards = [l.strip() for l in f.readlines() if "|" in l]
             if initial_cards:
+                logging.info("Starting initial bulk check from cards.txt...")
                 threading.Thread(target=start_bulk_check, args=(initial_cards, ADMIN_CHAT_ID), daemon=True).start()
     
     # Flask সার্ভার রান করা হচ্ছে
