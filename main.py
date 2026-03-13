@@ -54,6 +54,7 @@ def add_event(message, type="info"):
     color = "#b0b0b0"
     if type == "hit": color = "#00ff88"
     if type == "live": color = "#6e7aff"
+    if type == "dead": color = "#ff3131"
     if type == "proxy_pass": color = "#34d399"
     if type == "proxy_fail": color = "#f87171"
     
@@ -401,11 +402,13 @@ def check_card(card_line, chat_id):
         else:
             STATS["dead"] += 1
             reason = result.replace('FAILED: ', '').replace('ERROR: ', '')[:30]
+            add_event(f"DEAD ❌ | {cc_num[:6]}xxxx | {reason}", type="dead")
             send_telegram_msg(chat_id, f"❌ *DEAD:* `{cc_num}`\n📝 *Reason:* {reason}")
             with open("dead.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
     else:
         STATS["dead"] += 1
+        add_event(f"DEAD ❌ | {card['number'][:6]}xxxx | Stripe Declined", type="dead")
         send_telegram_msg(chat_id, f"❌ *DEAD:* `{card['number']}`\n📝 *Reason:* Stripe Declined")
         with open("dead.txt", "a") as f:
             f.write(f"{card_line} | Reason: Stripe Declined\n")
@@ -505,9 +508,35 @@ def bingen_loop(bin_num, chat_id):
 
     send_telegram_msg(chat_id, f"🚀 *BinGen Started:* `{bin_num}`\nUnlimited checking active...\nUse `/stop` to end.")
     
+    total_since_report = 0
+    start_hits = STATS["hits"]
+    start_lives = STATS["lives"]
+
     while USER_PROCESSES.get(chat_id, {}).get("bingen", False) and USER_PROCESSES.get(chat_id, {}).get("checking", False):
-        cards = generate_cards(bin_num, count=50)
+        batch_size = 50
+        cards = generate_cards(bin_num, count=batch_size)
         start_bulk_check(cards, chat_id, is_silent=True)
+        
+        total_since_report += batch_size
+        
+        if total_since_report >= 1000:
+            current_hits = STATS["hits"] - start_hits
+            current_lives = STATS["lives"] - start_lives
+            
+            report = (
+                "📊 *BinGen Progress Report*\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"🔢 *Checked:* `{total_since_report}`\n"
+                f"🔥 *Hits Found:* `{current_hits}`\n"
+                f"✅ *Lives Found:* `{current_lives}`\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "🚀 Continuing unlimited check..."
+            )
+            send_telegram_msg(chat_id, report)
+            total_since_report = 0
+            start_hits = STATS["hits"]
+            start_lives = STATS["lives"]
+            
         time.sleep(1) # Small delay between batches
 
 @bot.message_handler(commands=['bingen'])
