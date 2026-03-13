@@ -1,0 +1,8 @@
+__pycache__/
+*.log
+.env
+.vscode/
+.venv/
+hits.txt
+dead.txt
+cards.txt
