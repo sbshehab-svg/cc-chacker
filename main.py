@@ -614,13 +614,13 @@ def health():
     """
     return render_template_string(html_template)
 
+# বট এবং প্রক্সি রিফ্রেশার থ্রেড শুরু করা (Gunicorn এ সাপোর্ট পাওয়ার জন্য বাইরে রাখা হয়েছে)
+threading.Thread(target=run_bot, daemon=True).start()
+threading.Thread(target=proxy_refresher, daemon=True).start()
+
 if __name__ == "__main__":
     # পোর্ট কনফিগারেশন
     port = int(os.environ.get("PORT", 5000))
-    
-    # বট এবং প্রক্সি রিফ্রেশার থ্রেড শুরু করা
-    threading.Thread(target=run_bot, daemon=True).start()
-    threading.Thread(target=proxy_refresher, daemon=True).start()
     
     # ইনপুট ফাইল থেকে কার্ড থাকলে অটো চেকিং শুরু করা (ঐচ্ছিক)
     if os.path.exists("cards.txt"):
