@@ -577,199 +577,193 @@ def health():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>SBS HEHAB | System Command Center</title>
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+        <title>SBS TERMINAL | Command & Control</title>
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Play:wght@400;700&display=swap" rel="stylesheet">
         <style>
             :root {{
-                --neon-purple: #9d50bb;
-                --neon-blue: #6e7aff;
-                --success: #00ff88;
-                --warning: #ffcc00;
-                --error: #ff4444;
-                --bg-deep: #050508;
-                --bg-card: rgba(15, 15, 25, 0.8);
-                --glass-border: rgba(255, 255, 255, 0.1);
+                --cyber-green: #00ff41;
+                --cyber-blue: #00f2ff;
+                --cyber-purple: #bc13fe;
+                --cyber-red: #ff3131;
+                --bg-black: #0a0a0c;
+                --card-dark: #121217;
             }}
 
-            * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Space Grotesk', sans-serif; }}
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             
             body {{
-                background-color: var(--bg-deep);
-                background-image: 
-                    radial-gradient(circle at 10% 20%, rgba(157, 80, 187, 0.1) 0%, transparent 40%),
-                    radial-gradient(circle at 90% 80%, rgba(110, 122, 255, 0.15) 0%, transparent 40%),
-                    repeating-linear-gradient(rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 40px);
+                background: var(--bg-black);
                 color: #e0e0e0;
-                min-height: 100vh;
-                padding: 2rem 1rem;
+                font-family: 'Play', sans-serif;
+                overflow-x: hidden;
+                background-image: 
+                    linear-gradient(rgba(18, 18, 23, 0.8) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(18, 18, 23, 0.8) 1px, transparent 1px);
+                background-size: 30px 30px;
             }}
 
-            .dashboard {{
-                max-width: 1200px;
-                margin: 0 auto;
-                animation: dashboardEntry 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            .vignette {{
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: radial-gradient(circle, transparent 40%, rgba(0,0,0,0.8) 100%);
+                pointer-events: none; z-index: 10;
             }}
 
-            @keyframes dashboardEntry {{
-                from {{ opacity: 0; transform: scale(0.98); }}
-                to {{ opacity: 1; transform: scale(1); }}
+            .container {{
+                max-width: 1300px; margin: 0 auto; padding: 1.5rem; position: relative; z-index: 1;
             }}
 
+            /* Header Section */
             header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 2.5rem;
-                padding: 1.5rem;
-                background: var(--bg-card);
-                border: 1px solid var(--glass-border);
-                border-radius: 20px;
-                backdrop-filter: blur(20px);
+                display: flex; justify-content: space-between; align-items: center;
+                padding-bottom: 1.5rem; border-bottom: 2px solid #222; margin-bottom: 2rem;
             }}
 
-            .brand {{ display: flex; align-items: center; gap: 1rem; }}
-            .logo {{
-                width: 45px; height: 45px;
-                background: linear-gradient(135deg, var(--neon-purple), var(--neon-blue));
-                border-radius: 12px;
+            .logo-area {{ display: flex; align-items: center; gap: 15px; }}
+            .logo-hex {{
+                width: 50px; height: 50px; background: var(--cyber-blue);
+                clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
                 display: flex; align-items: center; justify-content: center;
-                box-shadow: 0 0 20px rgba(110, 122, 255, 0.4);
-                font-weight: 700; font-size: 1.5rem;
+                color: #000; font-weight: bold; font-size: 1.5rem;
+                box-shadow: 0 0 20px var(--cyber-blue);
             }}
 
-            .system-status {{ display: flex; gap: 1.5rem; }}
-            .status-indicator {{
-                display: flex; align-items: center; gap: 0.5rem;
-                font-size: 0.85rem; font-weight: 500; color: #888;
+            .system-nodes {{ display: flex; gap: 20px; }}
+            .node {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; letter-spacing: 1px; color: #666; }}
+            .node.active {{ color: var(--cyber-green); }}
+            .pulse-dot {{
+                width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+                box-shadow: 0 0 10px currentColor; animation: pulse 1.5s infinite;
             }}
-            .dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse 2s infinite; }}
-            @keyframes pulse {{ 0% {{ opacity: 0.4; }} 50% {{ opacity: 1; }} 100% {{ opacity: 0.4; }} }}
+            @keyframes pulse {{ 0% {{ opacity: 0.3; }} 50% {{ opacity: 1; }} 100% {{ opacity: 0.3; }} }}
 
-            .grid-container {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-                gap: 1.5rem;
-            }}
-
-            .card {{
-                background: var(--bg-card);
-                border: 1px solid var(--glass-border);
-                border-radius: 24px;
-                padding: 1.8rem;
-                backdrop-filter: blur(15px);
-                position: relative;
-                overflow: hidden;
+            /* Stats Grid */
+            .stats-grid {{
+                display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;
             }}
 
-            .card::before {{
-                content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
-                background: linear-gradient(90deg, transparent, var(--neon-blue), transparent);
-                opacity: 0.5;
+            .stat-card {{
+                background: var(--card-dark); border: 1px solid #222; padding: 1.5rem;
+                border-radius: 4px; position: relative; overflow: hidden;
             }}
 
-            .stat-label {{ color: #71717a; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; }}
-            .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 2.5rem; font-weight: 700; }}
-            
-            .hits {{ color: var(--success); }}
-            .lives {{ color: var(--neon-blue); }}
-            .dead {{ color: var(--error); }}
+            .stat-card::after {{
+                content: ''; position: absolute; bottom: 0; left: 0; width: 4px; height: 0%;
+                background: var(--cyber-blue); transition: 0.3s;
+            }}
+            .stat-card:hover::after {{ height: 100%; }}
 
-            .event-log {{
-                grid-column: span 2;
-                max-height: 400px;
-                display: flex;
-                flex-direction: column;
+            .stat-label {{ color: #777; font-size: 0.7rem; text-transform: uppercase; margin-bottom: 10px; display: block; }}
+            .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 2rem; font-weight: 700; color: #fff; }}
+            .val-hits {{ color: var(--cyber-green); }}
+            .val-lives {{ color: var(--cyber-blue); }}
+            .val-dead {{ color: var(--cyber-red); }}
+
+            /* Central Console */
+            .console-layout {{
+                display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;
             }}
 
-            .event-items {{
-                margin-top: 1rem;
-                overflow-y: auto;
-                flex-grow: 1;
-                padding-right: 10px;
+            .panel-header {{
+                background: #1a1a20; padding: 10px 15px; border-radius: 4px 4px 0 0;
+                border: 1px solid #333; display: flex; justify-content: space-between; align-items: center;
+                font-size: 0.8rem; font-weight: bold; color: #aaa;
+            }}
+
+            .terminal-window {{
+                background: #0d0d12; border: 1px solid #333; border-top: none; padding: 1rem;
+                height: 500px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
+                box-shadow: inset 0 0 30px rgba(0,0,0,0.5);
             }}
 
             .event-item {{
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 0.85rem;
-                padding: 0.8rem;
-                border-left: 2px solid var(--neon-purple);
-                background: rgba(255,255,255,0.03);
-                margin-bottom: 0.6rem;
-                border-radius: 0 8px 8px 0;
-                color: #b0b0b0;
+                padding: 8px 12px; margin-bottom: 6px; border-left: 3px solid #333;
+                background: rgba(255,255,255,0.02); font-size: 0.85rem; line-height: 1.4;
+                animation: slideIn 0.3s ease-out;
             }}
 
-            @media (max-width: 900px) {{ .event-log {{ grid-column: span 1; }} }}
+            @keyframes slideIn {{ from {{ opacity: 0; transform: translateX(-10px); }} to {{ opacity: 1; transform: translateX(0); }} }}
 
-            ::-webkit-scrollbar {{ width: 5px; }}
-            ::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 10px; }}
+            .footer-strip {{
+                margin-top: 3rem; text-align: center; color: #333; font-size: 0.7rem;
+                letter-spacing: 2px; text-transform: uppercase; padding-top: 1rem; border-top: 1px solid #111;
+            }}
+
+            @media (max-width: 900px) {{ .console-layout {{ grid-template-columns: 1fr; }} }}
         </style>
         <script>setTimeout(() => location.reload(), 10000);</script>
     </head>
     <body>
-        <div class="dashboard">
+        <div class="vignette"></div>
+        <div class="container">
             <header>
-                <div class="brand">
-                    <div class="logo">S</div>
+                <div class="logo-area">
+                    <div class="logo-hex">S</div>
                     <div>
-                        <h1 style="font-size: 1.2rem; font-weight: 700;">COMMAND CENTER</h1>
-                        <p style="font-size: 0.75rem; color: #666; font-family: 'JetBrains Mono';">v4.0.0 PREMIUM OPERATIONAL</p>
+                        <h1 style="font-size: 1.1rem; color: #fff; letter-spacing: 2px;">SBS CONTROL CENTER</h1>
+                        <p style="font-size: 0.6rem; color: #555;">ENCRYPTED SESSION ACTIVE // V4.2.0</p>
                     </div>
                 </div>
-                <div class="system-status">
-                    <div class="status-indicator"><div class="dot"></div> BOT ENGINE</div>
-                    <div class="status-indicator"><div class="dot"></div> PROXY CLOUD</div>
-                    <div class="status-indicator"><div class="dot"></div> FLASK API</div>
+                <div class="system-nodes">
+                    <div class="node active"><div class="pulse-dot"></div> MAIN_FRAME</div>
+                    <div class="node active"><div class="pulse-dot"></div> PROXY_NET</div>
+                    <div class="node active"><div class="pulse-dot" style="animation-delay: 0.5s"></div> STRI_GATE</div>
                 </div>
             </header>
 
-            <div class="grid-container">
-                <div class="card">
-                    <div class="stat-label">System Uptime</div>
-                    <div class="stat-value" style="font-size: 1.8rem;">{uptime_str}</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-label">System Uptime</span>
+                    <div class="stat-value" style="font-size: 1.4rem;">{uptime_str}</div>
                 </div>
-                <div class="card">
-                    <div class="stat-label">Active Processes</div>
-                    <div class="stat-value">{len(USER_PROCESSES)}</div>
+                <div class="stat-card">
+                    <span class="stat-label">Analyzed Cards</span>
+                    <div class="stat-value">{STATS['total_checked']}</div>
                 </div>
-                <div class="card">
-                    <div class="stat-label">Total Checked</div>
-                    <div class="stat-value" style="color: #fff;">{STATS['total_checked']}</div>
+                <div class="stat-card">
+                    <span class="stat-label">Confirmed Hits</span>
+                    <div class="stat-value val-hits">{STATS['hits']}</div>
                 </div>
-                
-                <div class="card">
-                    <div class="stat-label">Confirmed Hits</div>
-                    <div class="stat-value hits">{STATS['hits']}</div>
+                <div class="stat-card">
+                    <span class="stat-label">Live Detected</span>
+                    <div class="stat-value val-lives">{STATS['lives']}</div>
                 </div>
-                <div class="card">
-                    <div class="stat-label">Live Detection</div>
-                    <div class="stat-value lives">{STATS['lives']}</div>
+                <div class="stat-card">
+                    <span class="stat-label">Dead Drops</span>
+                    <div class="stat-value val-dead">{STATS['dead']}</div>
                 </div>
-                <div class="card">
-                    <div class="stat-label">Dead Cards</div>
-                    <div class="stat-value dead">{STATS['dead']}</div>
-                </div>
+            </div>
 
-                <div class="card">
-                    <div class="stat-label">Network Infrastructure</div>
-                    <div style="margin-top: 1rem;">
-                        <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">Pool Size: <span style="color:#fff">{STATS['proxy_count']}</span></p>
-                        <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">Network Health: <span style="color:var(--success)">{int((STATS['proxy_success']/(STATS['proxy_success']+STATS['proxy_errors'])*100)) if (STATS['proxy_success']+STATS['proxy_errors']) > 0 else 100}%</span></p>
-                        <p style="font-size: 0.8rem; color: #666;">Last Refresh: {STATS['last_proxy_refresh']}</p>
+            <div class="console-layout">
+                <div class="terminal-container">
+                    <div class="panel-header">
+                        <span>LIVE_ACTIVITY_STREAM.log</span>
+                        <span style="color: var(--cyber-green)">● RUNNING</span>
+                    </div>
+                    <div class="terminal-window">
+                        {events_html if events_html else '<div class="event-item">SCANNIG NETWORK... WAITING FOR INCOMING DATA...</div>'}
                     </div>
                 </div>
 
-                <div class="card event-log">
-                    <div class="stat-label">Live Activity Stream</div>
-                    <div class="event-items">
-                        {events_html if events_html else '<div class="event-item">Waiting for initial activity...</div>'}
+                <div class="side-panels">
+                    <div class="panel-header">NETWORK_PROXIES</div>
+                    <div class="stat-card" style="border-radius: 0 0 4px 4px; border-top: none;">
+                        <p style="font-size: 0.8rem; margin-bottom: 10px;">Status: <span style="color:var(--cyber-green)">ONLINE</span></p>
+                        <p style="font-size: 0.8rem; margin-bottom: 10px;">Active Nodes: <span style="color:#fff">{STATS['proxy_count']}</span></p>
+                        <p style="font-size: 0.8rem; margin-bottom: 10px;">Efficiency: <span style="color:var(--cyber-blue)">{int((STATS['proxy_success']/(STATS['proxy_success']+STATS['proxy_errors'])*100)) if (STATS['proxy_success']+STATS['proxy_errors']) > 0 else 100}%</span></p>
+                        <p style="font-size: 0.7rem; color: #444; margin-top: 15px;">REFRESH_CYCLE: {STATS['last_proxy_refresh']}</p>
+                    </div>
+
+                    <div class="panel-header" style="margin-top: 1.5rem;">ACTIVE_SESSIONS</div>
+                    <div class="stat-card" style="border-radius: 0 0 4px 4px; border-top: none;">
+                        <p style="font-size: 0.8rem;">Current Users: <span style="color:#fff">{len(USER_PROCESSES)}</span></p>
+                        <p style="font-size: 0.7rem; color:#444; margin-top:5px;">Multi-threading enabled</p>
                     </div>
                 </div>
             </div>
 
-            <footer style="margin-top: 3rem; text-align: center; color: #444; font-size: 0.8rem;">
-                &copy; 2026 SBSHEHAB | ADVANCED AUTOMATION & CYBERSECURITY
-            </footer>
+            <div class="footer-strip">
+                &copy; 2026 SBSHEHAB // ADVANCED AUTOMATION & CYBER DEFENSE SYSTEMS
+            </div>
         </div>
     </body>
     </html>
