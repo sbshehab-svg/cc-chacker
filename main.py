@@ -58,7 +58,7 @@ def add_event(message, type="info"):
     
     event_html = f'<div class="event-item" style="border-left-color: {color}">[{timestamp}] {message}</div>'
     STATS["recent_events"].insert(0, event_html)
-    if len(STATS["recent_events"]) > 15:
+    if len(STATS["recent_events"]) > 25:
         STATS["recent_events"].pop()
 
 # User specific control flags & settings
@@ -291,6 +291,9 @@ def check_card(card_line, chat_id):
         return
 
     user = {"first_name": "Jhon", "last_name": "Doe", "email": card['email']}
+    
+    # Show checking activity on dashboard
+    add_event(f"CHECKING 🔍 | {card['number'][:6]}xxxx|{card['month']}|{card['year']}", type="info")
     
     # Get user's custom amount
     amount = USER_PROCESSES.get(chat_id, {}).get("amount", "1.00")
