@@ -413,8 +413,17 @@ def handle_cards(message):
              bot.reply_to(message, "❌ Invalid format. Please use: `number|month|year|cvc`")
 
 def run_bot():
+    try:
+        logging.info("Removing any existing webhooks...")
+        bot.remove_webhook()
+        time.sleep(2) # Give Telegram a moment to clear the connection
+    except Exception as e:
+        logging.error(f"Error removing webhook: {e}")
+        
     logging.info("Telegram Bot Polling Started...")
-    bot.infinity_polling()
+    # Use skip_pending=True to ignore old messages on startup
+    # and provide a timeout to avoid hanging
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=20)
 
 @app.route('/health')
 def health():
@@ -544,8 +553,20 @@ def health():
     return render_template_string(html_template)
 
 # বট এবং প্রক্সি রিফ্রেশার থ্রেড শুরু করা (Gunicorn এ সাপোর্ট পাওয়ার জন্য বাইরে রাখা হয়েছে)
-threading.Thread(target=run_bot, daemon=True).start()
-threading.Thread(target=proxy_refresher, daemon=True).start()
+# Bot and Proxy refresher threads start
+# Move these into a function to be called more carefully if needed
+def start_background_threads():
+    # We check if we're in the main process to avoid double-polling in some environments
+    # However, Gunicorn workers are separate processes. 
+    # The best solution is to ensure Gunicorn runs with --workers 1.
+    t1 = threading.Thread(target=run_bot, daemon=True, name="BotThread")
+    t1.start()
+    t2 = threading.Thread(target=proxy_refresher, daemon=True, name="ProxyThread")
+    t2.start()
+
+# Only start if not already running (simple check)
+if not any(t.name == "BotThread" for t in threading.enumerate()):
+    start_background_threads()
 
 if __name__ == "__main__":
     # পোর্ট কনফিগারেশন
