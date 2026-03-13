@@ -600,25 +600,36 @@ def handle_cards(message):
 
 def run_bot():
     # Wait inside the thread so we don't block the main server startup
-    logging.info("BotThread started. Waiting 35s for old instance clearance...")
-    time.sleep(35)
+    add_event("Bot System: Initializing protocols...", type="info")
+    logging.info("BotThread started. Waiting 5s for old instance clearance...")
+    time.sleep(5)
     
     while True:
         try:
+            add_event("Bot System: Clearing webhooks/sessions...", type="info")
             logging.info("Clearing any existing Telegram sessions/webhooks...")
             bot.remove_webhook()
-            time.sleep(5) 
+            time.sleep(2) 
             
+            add_event("Bot System: POLLING_ACTIVE ● ONLINE", type="hit")
             logging.info("Telegram Bot Polling Started...")
+            # Notify Admin
+            try:
+                bot.send_message(ADMIN_CHAT_ID, "🚀 *Bot is now ONLINE and ready!*", parse_mode="Markdown")
+            except: pass
+            
             bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=20)
         except telebot.apihelper.ApiTelegramException as e:
             if e.error_code == 409:
+                add_event("Bot System: Conflict (409) - Retrying...", type="proxy_fail")
                 logging.warning("Conflict detected (409). Retrying in 10s...")
                 time.sleep(10)
             else:
+                add_event(f"Bot System: API Error ({e.error_code})", type="proxy_fail")
                 logging.error(f"Telegram API Error: {e}")
                 time.sleep(10)
         except Exception as e:
+            add_event(f"Bot System: Internal Error ({str(e)[:20]})", type="proxy_fail")
             logging.error(f"Bot Polling Error: {e}")
             time.sleep(10)
 
